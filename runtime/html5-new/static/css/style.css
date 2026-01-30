@@ -1,0 +1,685 @@
+/* 基础样式重置 */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    color: #333;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* 应用容器 */
+.app-container {
+    max-width: 480px;
+    margin: 0 auto;
+    min-height: 100vh;
+    background: #f5f7fa;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.2);
+}
+
+/* 配置面板 */
+.config-panel {
+    background: #fff;
+    border-bottom: 1px solid #e8e8e8;
+    transition: all 0.3s ease;
+}
+
+.config-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: linear-gradient(90deg, #4a90e2 0%, #5e60ce 100%);
+    color: #fff;
+}
+
+.config-header h2 {
+    font-size: 18px;
+    font-weight: 500;
+}
+
+.toggle-config-btn {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 4px;
+    transition: background 0.2s;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.toggle-config-btn:hover,
+.toggle-config-btn:active {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.config-content {
+    padding: 20px;
+    display: none;
+}
+
+.config-content.expanded {
+    display: block;
+}
+
+.config-item {
+    margin-bottom: 16px;
+}
+
+.config-item label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 14px;
+    color: #555;
+    font-weight: 500;
+}
+
+.config-item input[type="text"],
+.config-item textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #d9d9d9;
+    border-radius: 8px;
+    font-size: 14px;
+    transition: all 0.3s;
+    background: #fafafa;
+}
+
+.config-item input[type="text"]:focus,
+.config-item textarea:focus {
+    outline: none;
+    border-color: #4a90e2;
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1);
+}
+
+.config-hint {
+    margin-top: 6px;
+    font-size: 12px;
+    color: #999;
+}
+
+.checkbox-label {
+    display: flex !important;
+    align-items: center;
+    cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin-right: 8px;
+    cursor: pointer;
+}
+
+.config-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.btn {
+    flex: 1;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.btn-primary {
+    background: linear-gradient(90deg, #4a90e2 0%, #5e60ce 100%);
+    color: #fff;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(74, 144, 226, 0.4);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+}
+
+.btn-secondary {
+    background: #f0f0f0;
+    color: #666;
+}
+
+.btn-secondary:hover {
+    background: #e0e0e0;
+}
+
+/* 状态栏 */
+.status-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 20px;
+    background: #fff;
+    border-bottom: 1px solid #e8e8e8;
+    gap: 8px;
+}
+
+.status-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #ccc;
+    transition: all 0.3s;
+}
+
+.status-indicator.connected {
+    background: #52c41a;
+    box-shadow: 0 0 8px rgba(82, 196, 26, 0.4);
+}
+
+.status-indicator.connecting {
+    background: #faad14;
+    animation: pulse 1.5s infinite;
+}
+
+.status-indicator.error {
+    background: #ff4d4f;
+}
+
+.status-indicator.recording {
+    background: #ff4d4f;
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.status-text {
+    font-size: 14px;
+    color: #666;
+}
+
+/* 识别结果面板 */
+.result-panel {
+    flex: 1;
+    background: #fff;
+    margin: 16px;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.result-header h3 {
+    font-size: 16px;
+    font-weight: 500;
+    color: #333;
+}
+
+.btn-icon {
+    background: none;
+    border: none;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.btn-icon:hover {
+    background: #f0f0f0;
+}
+
+.result-content {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    min-height: 150px;
+}
+
+.result-placeholder {
+    color: #999;
+    text-align: center;
+    padding: 40px 20px;
+    font-size: 14px;
+}
+
+.result-text {
+    font-size: 16px;
+    line-height: 1.8;
+    color: #333;
+    word-wrap: break-word;
+}
+
+.result-meta {
+    padding: 12px 20px;
+    background: #fafafa;
+    border-top: 1px solid #f0f0f0;
+    font-size: 12px;
+    color: #999;
+    text-align: right;
+}
+
+/* 录音控制面板 */
+.record-panel {
+    background: #fff;
+    padding: 30px 20px 40px;
+    border-top: 1px solid #e8e8e8;
+}
+
+/* 录音前界面 */
+.record-idle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.record-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 20px;
+    transition: transform 0.2s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.record-btn:active {
+    transform: scale(0.95);
+}
+
+.record-btn-inner {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    transition: all 0.3s;
+}
+
+.record-btn:hover .record-btn-inner {
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+    transform: translateY(-2px);
+}
+
+.record-btn.recording .record-btn-inner {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+    animation: recording-pulse 1.5s infinite;
+}
+
+@keyframes recording-pulse {
+    0%, 100% {
+        box-shadow: 0 4px 15px rgba(255, 107, 107, 0.4);
+    }
+    50% {
+        box-shadow: 0 4px 30px rgba(255, 107, 107, 0.7);
+    }
+}
+
+.mic-icon {
+    width: 36px;
+    height: 36px;
+    color: #fff;
+}
+
+.record-btn-text {
+    font-size: 16px;
+    color: #666;
+    font-weight: 500;
+}
+
+.record-hint {
+    margin-top: 16px;
+    font-size: 13px;
+    color: #999;
+}
+
+/* 录音中界面 */
+.record-active {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.recording-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.wave-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 60px;
+}
+
+.wave-bar {
+    width: 6px;
+    height: 20px;
+    background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    border-radius: 3px;
+    animation: wave 1s ease-in-out infinite;
+}
+
+.wave-bar:nth-child(1) { animation-delay: 0s; }
+.wave-bar:nth-child(2) { animation-delay: 0.1s; }
+.wave-bar:nth-child(3) { animation-delay: 0.2s; }
+.wave-bar:nth-child(4) { animation-delay: 0.3s; }
+.wave-bar:nth-child(5) { animation-delay: 0.4s; }
+
+@keyframes wave {
+    0%, 100% {
+        height: 20px;
+        opacity: 0.5;
+    }
+    50% {
+        height: 50px;
+        opacity: 1;
+    }
+}
+
+.recording-time {
+    font-size: 28px;
+    font-weight: 600;
+    color: #333;
+    font-variant-numeric: tabular-nums;
+}
+
+.recording-status {
+    font-size: 16px;
+    color: #667eea;
+    font-weight: 500;
+    margin-bottom: 8px;
+}
+
+.recording-hint {
+    font-size: 13px;
+    color: #999;
+}
+
+/* 停止录音按钮 */
+.record-stop-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 20px;
+    transition: transform 0.2s;
+    -webkit-tap-highlight-color: transparent;
+    margin-top: 20px;
+}
+
+.record-stop-btn:active {
+    transform: scale(0.95);
+}
+
+.record-stop-btn-inner {
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 15px rgba(255, 107, 107, 0.4);
+    transition: all 0.3s;
+}
+
+.record-stop-btn:hover .record-stop-btn-inner {
+    box-shadow: 0 6px 20px rgba(255, 107, 107, 0.5);
+    transform: translateY(-2px);
+}
+
+.stop-icon {
+    width: 28px;
+    height: 28px;
+    color: #fff;
+}
+
+.record-stop-btn-text {
+    font-size: 16px;
+    color: #ff6b6b;
+    font-weight: 500;
+}
+
+/* 错误提示 */
+.error-toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+.error-content {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #fff;
+    padding: 14px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    border-left: 4px solid #ff4d4f;
+    min-width: 280px;
+}
+
+.error-icon {
+    font-size: 20px;
+}
+
+.error-message {
+    flex: 1;
+    font-size: 14px;
+    color: #333;
+}
+
+.error-close {
+    background: none;
+    border: none;
+    font-size: 20px;
+    color: #999;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.error-close:hover {
+    color: #666;
+}
+
+/* 加载遮罩 */
+.loading-mask {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+}
+
+.loading-spinner {
+    background: #fff;
+    padding: 30px 40px;
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #f0f0f0;
+    border-top-color: #667eea;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.loading-text {
+    font-size: 14px;
+    color: #666;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+
+/* 移动端适配 */
+@media (max-width: 480px) {
+    .app-container {
+        max-width: 100%;
+    }
+    
+    .config-content {
+        padding: 16px;
+    }
+    
+    .result-panel {
+        margin: 12px;
+    }
+    
+    .record-panel {
+        padding: 24px 16px 32px;
+    }
+    
+    .record-btn-inner {
+        width: 72px;
+        height: 72px;
+    }
+    
+    .mic-icon {
+        width: 32px;
+        height: 32px;
+    }
+}
+
+/* 深色模式支持 */
+@media (prefers-color-scheme: dark) {
+    body {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    }
+    
+    .app-container {
+        background: #1f1f1f;
+    }
+    
+    .config-panel,
+    .status-bar,
+    .result-panel,
+    .record-panel {
+        background: #2a2a2a;
+        border-color: #3a3a3a;
+        color: #e0e0e0;
+    }
+    
+    .config-item input[type="text"],
+    .config-item textarea {
+        background: #333;
+        border-color: #444;
+        color: #e0e0e0;
+    }
+    
+    .result-header h3,
+    .status-text,
+    .record-btn-text {
+        color: #e0e0e0;
+    }
+    
+    .result-placeholder,
+    .record-hint,
+    .recording-hint,
+    .config-hint {
+        color: #888;
+    }
+    
+    .result-text {
+        color: #e0e0e0;
+    }
+    
+    .result-meta {
+        background: #252525;
+        border-color: #3a3a3a;
+    }
+}

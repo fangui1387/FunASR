@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="format-detection" content="telephone=no">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <title>FunASR 语音识别</title>
+    <link rel="stylesheet" href="css/style.css">
+	<script src="./js/vconsole.min.js"></script>
+</head>
+<body>
+    <div id="app" class="app-container">
+        <!-- 配置面板 -->
+        <div class="config-panel" id="configPanel">
+            <div class="config-header">
+                <h2>语音识别配置</h2>
+                <button class="toggle-config-btn" id="toggleConfigBtn">
+                    <span class="icon">⚙️</span>
+                </button>
+            </div>
+            <div class="config-content" id="configContent">
+                <div class="config-item">
+                    <label for="wsUrl">WebSocket服务器地址:</label>
+                    <input type="text" id="wsUrl" placeholder="ws://192.168.43.12:10095/" value="ws://192.168.43.12:10095/">
+                    <div class="config-hint">支持 ws:// 或 wss:// 协议</div>
+                </div>
+                <div class="config-item">
+                    <label for="hotwords">热词配置 (可选):</label>
+                    <textarea id="hotwords" rows="3" placeholder="阿里巴巴 20&#10;通义实验室 30"></textarea>
+                    <div class="config-hint">每行一个热词，格式：热词 权重(1-100)</div>
+                </div>
+                <div class="config-item">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="useItn" checked>
+                        <span>启用逆文本标准化 (ITN)</span>
+                    </label>
+                </div>
+                <div class="config-actions">
+                    <button class="btn btn-primary" id="testConnectionBtn">测试连接</button>
+                    <button class="btn btn-secondary" id="resetConfigBtn">重置</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 状态栏 -->
+        <div class="status-bar" id="statusBar">
+            <div class="status-indicator" id="statusIndicator"></div>
+            <span class="status-text" id="statusText">准备就绪</span>
+        </div>
+
+        <!-- 识别结果区域 -->
+        <div class="result-panel">
+            <div class="result-header">
+                <h3>识别结果</h3>
+                <button class="btn-icon" id="clearResultBtn" title="清空结果">🗑️</button>
+            </div>
+            <div class="result-content" id="resultContent">
+                <div class="result-placeholder">识别内容将显示在这里...</div>
+            </div>
+            <div class="result-meta" id="resultMeta"></div>
+        </div>
+
+        <!-- 录音控制区域 -->
+        <div class="record-panel" id="recordPanel">
+            <!-- 录音前界面 -->
+            <div class="record-idle" id="recordIdle">
+                <button class="record-btn" id="recordBtn">
+                    <div class="record-btn-inner">
+                        <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                            <line x1="12" y1="19" x2="12" y2="23"></line>
+                            <line x1="8" y1="23" x2="16" y2="23"></line>
+                        </svg>
+                    </div>
+                    <span class="record-btn-text">开始录音</span>
+                </button>
+                <div class="record-hint">点击按钮开始录音</div>
+            </div>
+
+            <!-- 录音中界面 -->
+            <div class="record-active" id="recordActive" style="display: none;">
+                <div class="recording-indicator">
+                    <div class="wave-container" id="waveContainer">
+                        <div class="wave-bar"></div>
+                        <div class="wave-bar"></div>
+                        <div class="wave-bar"></div>
+                        <div class="wave-bar"></div>
+                        <div class="wave-bar"></div>
+                    </div>
+                    <div class="recording-time" id="recordingTime">00:00</div>
+                </div>
+                <div class="recording-status">正在录音...</div>
+                <button class="record-stop-btn" id="recordStopBtn">
+                    <div class="record-stop-btn-inner">
+                        <svg class="stop-icon" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+                        </svg>
+                    </div>
+                    <span class="record-stop-btn-text">停止录音</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 错误提示 -->
+        <div class="error-toast" id="errorToast" style="display: none;">
+            <div class="error-content">
+                <span class="error-icon">⚠️</span>
+                <span class="error-message" id="errorMessage"></span>
+                <button class="error-close" id="errorCloseBtn">×</button>
+            </div>
+        </div>
+
+        <!-- 加载遮罩 -->
+        <div class="loading-mask" id="loadingMask" style="display: none;">
+            <div class="loading-spinner">
+                <div class="spinner"></div>
+                <div class="loading-text">正在连接...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 引入录音核心库 -->
+    <script src="lib/recorder-core.js"></script>
+    <!-- 引入应用模块 -->
+    <script src="js/stateManager.js"></script>
+    <script src="js/errorHandler.js"></script>
+    <script src="js/wsClient.js"></script>
+    <script src="js/audioRecorder.js"></script>
+    <script src="js/app.js"></script>
+	<script>
+		// 初始化
+		const vConsole = new VConsole();
+	</script>
+</body>
+</html>

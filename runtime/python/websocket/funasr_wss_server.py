@@ -1,345 +1,346 @@
+#!/usr/bin/env python3
+"""
+FunASR WebSocket Server
+Compatible with websockets 11.0.3
+"""
+
 import asyncio
 import json
 import websockets
-import time
-import logging
-import tracemalloc
 import numpy as np
 import argparse
 import ssl
+import sys
 
+print("Starting FunASR WebSocket Server...", flush=True)
 
+# Parse arguments
 parser = argparse.ArgumentParser()
-parser.add_argument(
-    "--host", type=str, default="0.0.0.0", required=False, help="host ip, localhost, 0.0.0.0"
-)
-parser.add_argument("--port", type=int, default=10095, required=False, help="grpc server port")
-parser.add_argument(
-    "--asr_model",
-    type=str,
-    default="iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-    help="model from modelscope",
-)
-parser.add_argument("--asr_model_revision", type=str, default="v2.0.4", help="")
-parser.add_argument(
-    "--asr_model_online",
-    type=str,
-    default="iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online",
-    help="model from modelscope",
-)
-parser.add_argument("--asr_model_online_revision", type=str, default="v2.0.4", help="")
-parser.add_argument(
-    "--vad_model",
-    type=str,
-    default="iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-    help="model from modelscope",
-)
-parser.add_argument("--vad_model_revision", type=str, default="v2.0.4", help="")
-parser.add_argument(
-    "--punc_model",
-    type=str,
-    default="iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727",
-    help="model from modelscope",
-)
-parser.add_argument("--punc_model_revision", type=str, default="v2.0.4", help="")
+parser.add_argument("--host", type=str, default="0.0.0.0", help="host ip")
+parser.add_argument("--port", type=int, default=10095, help="server port")
+parser.add_argument("--asr_model", type=str, default="iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch")
+parser.add_argument("--asr_model_revision", type=str, default="v2.0.4")
+parser.add_argument("--asr_model_online", type=str, default="iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online")
+parser.add_argument("--asr_model_online_revision", type=str, default="v2.0.4")
+parser.add_argument("--vad_model", type=str, default="iic/speech_fsmn_vad_zh-cn-16k-common-pytorch")
+parser.add_argument("--vad_model_revision", type=str, default="v2.0.4")
+parser.add_argument("--punc_model", type=str, default="iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727")
+parser.add_argument("--punc_model_revision", type=str, default="v2.0.4")
 parser.add_argument("--ngpu", type=int, default=1, help="0 for cpu, 1 for gpu")
-parser.add_argument("--device", type=str, default="cuda", help="cuda, cpu")
+parser.add_argument("--device", type=str, default="cuda", help="cuda or cpu")
 parser.add_argument("--ncpu", type=int, default=4, help="cpu cores")
-parser.add_argument(
-    "--certfile",
-    type=str,
-    default="../../ssl_key/server.crt",
-    required=False,
-    help="certfile for ssl",
-)
-
-parser.add_argument(
-    "--keyfile",
-    type=str,
-    default="../../ssl_key/server.key",
-    required=False,
-    help="keyfile for ssl",
-)
+parser.add_argument("--certfile", type=str, default="", help="SSL cert file")
+parser.add_argument("--keyfile", type=str, default="", help="SSL key file")
 args = parser.parse_args()
 
+print(f"Args parsed: host={args.host}, port={args.port}, ngpu={args.ngpu}", flush=True)
 
+# Global variables
 websocket_users = set()
+model_asr = None
+model_asr_streaming = None
+model_vad = None
+model_punc = None
+models_loaded = False
 
-print("model loading")
-from funasr import AutoModel
 
-# asr
-model_asr = AutoModel(
-    model=args.asr_model,
-    model_revision=args.asr_model_revision,
-    ngpu=args.ngpu,
-    ncpu=args.ncpu,
-    device=args.device,
-    disable_pbar=True,
-    disable_log=True,
-)
-# asr
-model_asr_streaming = AutoModel(
-    model=args.asr_model_online,
-    model_revision=args.asr_model_online_revision,
-    ngpu=args.ngpu,
-    ncpu=args.ncpu,
-    device=args.device,
-    disable_pbar=True,
-    disable_log=True,
-)
-# vad
-model_vad = AutoModel(
-    model=args.vad_model,
-    model_revision=args.vad_model_revision,
-    ngpu=args.ngpu,
-    ncpu=args.ncpu,
-    device=args.device,
-    disable_pbar=True,
-    disable_log=True,
-    # chunk_size=60,
-)
+def load_models():
+    """Load all models - called on first connection"""
+    global model_asr, model_asr_streaming, model_vad, model_punc, models_loaded
+    
+    if models_loaded:
+        return
+    
+    print("Loading models...", flush=True)
+    from funasr import AutoModel
 
-if args.punc_model != "":
-    model_punc = AutoModel(
-        model=args.punc_model,
-        model_revision=args.punc_model_revision,
+    # Load ASR model
+    model_asr = AutoModel(
+        model=args.asr_model,
+        model_revision=args.asr_model_revision,
         ngpu=args.ngpu,
         ncpu=args.ncpu,
         device=args.device,
         disable_pbar=True,
         disable_log=True,
     )
-else:
-    model_punc = None
+    
+    # Load online ASR model
+    model_asr_streaming = AutoModel(
+        model=args.asr_model_online,
+        model_revision=args.asr_model_online_revision,
+        ngpu=args.ngpu,
+        ncpu=args.ncpu,
+        device=args.device,
+        disable_pbar=True,
+        disable_log=True,
+    )
+    
+    # Load VAD model
+    model_vad = AutoModel(
+        model=args.vad_model,
+        model_revision=args.vad_model_revision,
+        ngpu=args.ngpu,
+        ncpu=args.ncpu,
+        device=args.device,
+        disable_pbar=True,
+        disable_log=True,
+    )
+
+    # Load punctuation model
+    if args.punc_model != "":
+        model_punc = AutoModel(
+            model=args.punc_model,
+            model_revision=args.punc_model_revision,
+            ngpu=args.ngpu,
+            ncpu=args.ncpu,
+            device=args.device,
+            disable_pbar=True,
+            disable_log=True,
+        )
+    else:
+        model_punc = None
+    
+    models_loaded = True
+    print("Models loaded!", flush=True)
 
 
-print("model loaded! only support one client at the same time now!!!!")
+async def process_vad(websocket, audio_in):
+    """Process VAD"""
+    segments_result = model_vad.generate(
+        input=audio_in, **websocket.status_dict_vad
+    )[0]["value"]
+    
+    speech_start = -1
+    speech_end = -1
+    
+    if len(segments_result) == 1:
+        if segments_result[0][0] != -1:
+            speech_start = segments_result[0][0]
+        if segments_result[0][1] != -1:
+            speech_end = segments_result[0][1]
+    
+    return speech_start, speech_end
 
 
-async def ws_reset(websocket):
-    print("ws reset now, total num is ", len(websocket_users))
+async def process_asr_offline(websocket, audio_in):
+    """Process offline ASR"""
+    if len(audio_in) == 0:
+        return
+    
+    rec_result = model_asr.generate(input=audio_in, **websocket.status_dict_asr)[0]
+    
+    # Apply punctuation if available
+    if model_punc and len(rec_result.get("text", "")) > 0:
+        rec_result = model_punc.generate(
+            input=rec_result["text"], **websocket.status_dict_punc
+        )[0]
+    
+    if len(rec_result.get("text", "")) > 0:
+        mode = "2pass-offline" if "2pass" in websocket.mode else websocket.mode
+        message = json.dumps({
+            "mode": mode,
+            "text": rec_result["text"],
+            "wav_name": websocket.wav_name,
+            "is_final": websocket.is_speaking,
+        })
+        await websocket.send(message)
 
-    websocket.status_dict_asr_online["cache"] = {}
-    websocket.status_dict_asr_online["is_final"] = True
-    websocket.status_dict_vad["cache"] = {}
-    websocket.status_dict_vad["is_final"] = True
-    websocket.status_dict_punc["cache"] = {}
 
-    await websocket.close()
+async def process_asr_online(websocket, audio_in):
+    """Process online ASR"""
+    if len(audio_in) == 0:
+        return
+    
+    rec_result = model_asr_streaming.generate(
+        input=audio_in, **websocket.status_dict_asr_online
+    )[0]
+    
+    if len(rec_result.get("text", "")) > 0:
+        mode = "2pass-online" if "2pass" in websocket.mode else websocket.mode
+        message = json.dumps({
+            "mode": mode,
+            "text": rec_result["text"],
+            "wav_name": websocket.wav_name,
+            "is_final": websocket.is_speaking,
+        })
+        await websocket.send(message)
 
 
-async def clear_websocket():
-    for websocket in websocket_users:
-        await ws_reset(websocket)
-    websocket_users.clear()
-
-
-async def ws_serve(websocket, path):
+async def ws_serve(websocket):
+    """WebSocket connection handler"""
+    global websocket_users
+    
+    print(f"New connection from {websocket.remote_address}", flush=True)
+    
+    # Load models on first connection
+    if not models_loaded:
+        try:
+            load_models()
+        except Exception as e:
+            print(f"Error loading models: {e}", flush=True)
+            await websocket.close()
+            return
+    
+    websocket_users.add(websocket)
+    
+    # Initialize status
+    websocket.status_dict_asr = {}
+    websocket.status_dict_asr_online = {"cache": {}, "is_final": False, "chunk_size": [5, 10, 5]}
+    websocket.status_dict_vad = {"cache": {}, "is_final": False}
+    websocket.status_dict_punc = {"cache": {}} if model_punc else {}
+    websocket.chunk_interval = 10
+    websocket.vad_pre_idx = 0
+    websocket.wav_name = "microphone"
+    websocket.mode = "2pass"
+    websocket.is_speaking = True
+    speech_start = False
+    speech_end_i = -1
     frames = []
     frames_asr = []
     frames_asr_online = []
-    global websocket_users
-    # await clear_websocket()
-    websocket_users.add(websocket)
-    websocket.status_dict_asr = {}
-    websocket.status_dict_asr_online = {"cache": {}, "is_final": False}
-    websocket.status_dict_vad = {"cache": {}, "is_final": False}
-    websocket.status_dict_punc = {"cache": {}}
-    websocket.chunk_interval = 10
-    websocket.vad_pre_idx = 0
-    speech_start = False
-    speech_end_i = -1
-    websocket.wav_name = "microphone"
-    websocket.mode = "2pass"
-    print("new user connected", flush=True)
 
     try:
         async for message in websocket:
             if isinstance(message, str):
-                messagejson = json.loads(message)
+                # Handle JSON messages
+                try:
+                    messagejson = json.loads(message)
+                    print(f"Received JSON: {messagejson}", flush=True)
+                    
+                    if "is_speaking" in messagejson:
+                        websocket.is_speaking = messagejson["is_speaking"]
+                        websocket.status_dict_asr_online["is_final"] = not websocket.is_speaking
+                        print(f"is_speaking changed to: {websocket.is_speaking}", flush=True)
+                        
+                        # 当 is_speaking 变为 False 时，立即处理离线 ASR
+                        if not websocket.is_speaking and frames_asr:
+                            print(f"Processing offline ASR on is_speaking=False, frames_asr: {len(frames_asr)}", flush=True)
+                            if websocket.mode in ["2pass", "offline"]:
+                                audio_in = b"".join(frames_asr)
+                                print(f"Audio data length for ASR: {len(audio_in)} bytes", flush=True)
+                                try:
+                                    await process_asr_offline(websocket, audio_in)
+                                except Exception as e:
+                                    print(f"Error in ASR offline: {e}", flush=True)
+                            
+                            frames_asr = []
+                            speech_start = False
+                            frames_asr_online = []
+                            websocket.status_dict_asr_online["cache"] = {}
+                            websocket.vad_pre_idx = 0
+                            frames = []
+                            websocket.status_dict_vad["cache"] = {}
+                    
+                    if "chunk_interval" in messagejson:
+                        websocket.chunk_interval = messagejson["chunk_interval"]
+                    if "wav_name" in messagejson:
+                        websocket.wav_name = messagejson.get("wav_name")
+                    if "chunk_size" in messagejson:
+                        chunk_size = messagejson["chunk_size"]
+                        if isinstance(chunk_size, str):
+                            chunk_size = chunk_size.split(",")
+                        websocket.status_dict_asr_online["chunk_size"] = [int(x) for x in chunk_size]
+                    if "hotwords" in messagejson:
+                        websocket.status_dict_asr["hotword"] = messagejson["hotwords"]
+                    if "mode" in messagejson:
+                        websocket.mode = messagejson["mode"]
+                except json.JSONDecodeError:
+                    print(f"Invalid JSON: {message}", flush=True)
+                    continue
 
-                if "is_speaking" in messagejson:
-                    websocket.is_speaking = messagejson["is_speaking"]
-                    websocket.status_dict_asr_online["is_final"] = not websocket.is_speaking
-                if "chunk_interval" in messagejson:
-                    websocket.chunk_interval = messagejson["chunk_interval"]
-                if "wav_name" in messagejson:
-                    websocket.wav_name = messagejson.get("wav_name")
-                if "chunk_size" in messagejson:
-                    chunk_size = messagejson["chunk_size"]
-                    if isinstance(chunk_size, str):
-                        chunk_size = chunk_size.split(",")
-                    websocket.status_dict_asr_online["chunk_size"] = [int(x) for x in chunk_size]
-                if "encoder_chunk_look_back" in messagejson:
-                    websocket.status_dict_asr_online["encoder_chunk_look_back"] = messagejson[
-                        "encoder_chunk_look_back"
-                    ]
-                if "decoder_chunk_look_back" in messagejson:
-                    websocket.status_dict_asr_online["decoder_chunk_look_back"] = messagejson[
-                        "decoder_chunk_look_back"
-                    ]
-                if "hotwords" in messagejson:
-                    websocket.status_dict_asr["hotword"] = messagejson["hotwords"]
-                if "mode" in messagejson:
-                    websocket.mode = messagejson["mode"]
+            # Process binary audio data
+            if not isinstance(message, str):
+                print(f"Received audio data: {len(message)} bytes", flush=True)
+                frames.append(message)
+                # 所有音频数据都进入 frames_asr，不依赖 VAD
+                frames_asr.append(message)
+                duration_ms = len(message) // 32
+                websocket.vad_pre_idx += duration_ms
 
-            websocket.status_dict_vad["chunk_size"] = int(
-                websocket.status_dict_asr_online["chunk_size"][1] * 60 / websocket.chunk_interval
-            )
-            if len(frames_asr_online) > 0 or len(frames_asr) >= 0 or not isinstance(message, str):
-                if not isinstance(message, str):
-                    frames.append(message)
-                    duration_ms = len(message) // 32
-                    websocket.vad_pre_idx += duration_ms
-
-                    # asr online
-                    frames_asr_online.append(message)
-                    websocket.status_dict_asr_online["is_final"] = speech_end_i != -1
-                    if (
-                        len(frames_asr_online) % websocket.chunk_interval == 0
-                        or websocket.status_dict_asr_online["is_final"]
-                    ):
-                        if websocket.mode == "2pass" or websocket.mode == "online":
-                            audio_in = b"".join(frames_asr_online)
-                            try:
-                                await async_asr_online(websocket, audio_in)
-                            except:
-                                print(f"error in asr streaming, {websocket.status_dict_asr_online}")
-                        frames_asr_online = []
-                    if speech_start:
-                        frames_asr.append(message)
-                    # vad online
-                    try:
-                        speech_start_i, speech_end_i = await async_vad(websocket, message)
-                    except:
-                        print("error in vad")
-                    if speech_start_i != -1:
-                        speech_start = True
-                        beg_bias = (websocket.vad_pre_idx - speech_start_i) // duration_ms
-                        frames_pre = frames[-beg_bias:]
-                        frames_asr = []
-                        frames_asr.extend(frames_pre)
-                # asr punc offline
-                if speech_end_i != -1 or not websocket.is_speaking:
-                    # print("vad end point")
-                    if websocket.mode == "2pass" or websocket.mode == "offline":
-                        audio_in = b"".join(frames_asr)
+                # Add to online ASR frames
+                frames_asr_online.append(message)
+                websocket.status_dict_asr_online["is_final"] = speech_end_i != -1
+                
+                # Process online ASR
+                if (len(frames_asr_online) % websocket.chunk_interval == 0 or 
+                    websocket.status_dict_asr_online["is_final"]):
+                    if websocket.mode in ["2pass", "online"]:
+                        audio_in = b"".join(frames_asr_online)
                         try:
-                            await async_asr(websocket, audio_in)
-                        except:
-                            print("error in asr offline")
+                            await process_asr_online(websocket, audio_in)
+                        except Exception as e:
+                            print(f"Error in ASR streaming: {e}", flush=True)
+                    frames_asr_online = []
+                
+                # VAD processing (optional, for detecting speech segments)
+                try:
+                    speech_start_i, speech_end_i = await process_vad(websocket, message)
+                except Exception as e:
+                    print(f"Error in VAD: {e}", flush=True)
+                
+                if speech_start_i != -1:
+                    speech_start = True
+                
+                if speech_end_i != -1:
+                    speech_start = False
+                
+                # Process offline ASR only when VAD detects speech end
+                # Don't process here based on is_speaking - that's handled in JSON message handler
+                if speech_end_i != -1:
+                    print(f"Processing offline ASR on VAD end, frames_asr: {len(frames_asr)}", flush=True)
+                    if websocket.mode in ["2pass", "offline"]:
+                        audio_in = b"".join(frames_asr)
+                        print(f"Audio data length for ASR: {len(audio_in)} bytes", flush=True)
+                        try:
+                            await process_asr_offline(websocket, audio_in)
+                        except Exception as e:
+                            print(f"Error in ASR offline: {e}", flush=True)
+                    
                     frames_asr = []
                     speech_start = False
                     frames_asr_online = []
                     websocket.status_dict_asr_online["cache"] = {}
-                    if not websocket.is_speaking:
-                        websocket.vad_pre_idx = 0
-                        frames = []
-                        websocket.status_dict_vad["cache"] = {}
-                    else:
-                        frames = frames[-20:]
+                    frames = frames[-20:]
 
     except websockets.ConnectionClosed:
-        print("ConnectionClosed...", websocket_users, flush=True)
-        await ws_reset(websocket)
-        websocket_users.remove(websocket)
-    except websockets.InvalidState:
-        print("InvalidState...")
+        print(f"Connection closed: {websocket.remote_address}", flush=True)
     except Exception as e:
-        print("Exception:", e)
+        print(f"Exception: {e}", flush=True)
+    finally:
+        websocket_users.discard(websocket)
+        print(f"Connection ended: {websocket.remote_address}", flush=True)
 
 
-async def async_vad(websocket, audio_in):
-
-    segments_result = model_vad.generate(input=audio_in, **websocket.status_dict_vad)[0]["value"]
-    # print(segments_result)
-
-    speech_start = -1
-    speech_end = -1
-
-    if len(segments_result) == 0 or len(segments_result) > 1:
-        return speech_start, speech_end
-    if segments_result[0][0] != -1:
-        speech_start = segments_result[0][0]
-    if segments_result[0][1] != -1:
-        speech_end = segments_result[0][1]
-    return speech_start, speech_end
-
-
-async def async_asr(websocket, audio_in):
-    if len(audio_in) > 0:
-        # print(len(audio_in))
-        rec_result = model_asr.generate(input=audio_in, **websocket.status_dict_asr)[0]
-        # print("offline_asr, ", rec_result)
-        if model_punc is not None and len(rec_result["text"]) > 0:
-            # print("offline, before punc", rec_result, "cache", websocket.status_dict_punc)
-            rec_result = model_punc.generate(
-                input=rec_result["text"], **websocket.status_dict_punc
-            )[0]
-            # print("offline, after punc", rec_result)
-        if len(rec_result["text"]) > 0:
-            # print("offline", rec_result)
-            mode = "2pass-offline" if "2pass" in websocket.mode else websocket.mode
-            message = json.dumps(
-                {
-                    "mode": mode,
-                    "text": rec_result["text"],
-                    "wav_name": websocket.wav_name,
-                    "is_final": websocket.is_speaking,
-                }
-            )
-            await websocket.send(message)
-
-    else:
-        mode = "2pass-offline" if "2pass" in websocket.mode else websocket.mode
-        message = json.dumps(
-            {
-                "mode": mode,
-                "text": "",
-                "wav_name": websocket.wav_name,
-                "is_final": websocket.is_speaking,
-            }
-        )
-        await websocket.send(message)    
-
-async def async_asr_online(websocket, audio_in):
-    if len(audio_in) > 0:
-        # print(websocket.status_dict_asr_online.get("is_final", False))
-        rec_result = model_asr_streaming.generate(
-            input=audio_in, **websocket.status_dict_asr_online
-        )[0]
-        # print("online, ", rec_result)
-        if websocket.mode == "2pass" and websocket.status_dict_asr_online.get("is_final", False):
-            return
-            #     websocket.status_dict_asr_online["cache"] = dict()
-        if len(rec_result["text"]):
-            mode = "2pass-online" if "2pass" in websocket.mode else websocket.mode
-            message = json.dumps(
-                {
-                    "mode": mode,
-                    "text": rec_result["text"],
-                    "wav_name": websocket.wav_name,
-                    "is_final": websocket.is_speaking,
-                }
-            )
-            await websocket.send(message)
-
-
-if len(args.certfile) > 0:
-    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-
-    # Generate with Lets Encrypt, copied to this location, chown to current user and 400 permissions
-    ssl_cert = args.certfile
-    ssl_key = args.keyfile
-
-    ssl_context.load_cert_chain(ssl_cert, keyfile=ssl_key)
-    start_server = websockets.serve(
-        ws_serve, args.host, args.port, subprotocols=["binary"], ping_interval=None, ssl=ssl_context
+async def main():
+    """Main async function"""
+    # Setup SSL if needed
+    ssl_context = None
+    if args.certfile and len(args.certfile) > 0:
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(args.certfile, keyfile=args.keyfile)
+    
+    print(f"Starting WebSocket server on ws://{args.host}:{args.port}/", flush=True)
+    print("Models will be loaded on first connection...", flush=True)
+    
+    # Create server
+    server = await websockets.serve(
+        ws_serve,
+        args.host,
+        args.port,
+        ssl=ssl_context,
+        ping_interval=None,
     )
-else:
-    start_server = websockets.serve(
-        ws_serve, args.host, args.port, subprotocols=["binary"], ping_interval=None
-    )
-asyncio.get_event_loop().run_until_complete(start_server)
-asyncio.get_event_loop().run_forever()
+    
+    print(f"WebSocket server started on ws://{args.host}:{args.port}/", flush=True)
+    print("Press Ctrl+C to stop", flush=True)
+    
+    # Run forever
+    await asyncio.Future()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nShutting down...", flush=True)
