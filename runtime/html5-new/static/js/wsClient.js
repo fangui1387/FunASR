@@ -485,8 +485,10 @@
                 // 检查心跳响应超时
                 const timeSinceLastPong = Date.now() - this._lastPongTime;
                 if (timeSinceLastPong > this.config.heartbeatInterval * 2) {
-                    console.warn('WSClient: Heartbeat timeout');
+                    console.warn('WSClient: Heartbeat timeout, reconnecting...');
                     this._cleanupWebSocket();
+                    // 触发重连
+                    this._scheduleReconnect();
                     return;
                 }
                 

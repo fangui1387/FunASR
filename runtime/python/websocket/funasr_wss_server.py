@@ -208,6 +208,11 @@ async def ws_serve(websocket):
                     messagejson = json.loads(message)
                     print(f"Received JSON: {messagejson}", flush=True)
                     
+                    # 处理心跳 ping
+                    if messagejson.get("type") == "ping":
+                        await websocket.send(json.dumps({"type": "pong"}))
+                        continue
+                    
                     if "is_speaking" in messagejson:
                         websocket.is_speaking = messagejson["is_speaking"]
                         websocket.status_dict_asr_online["is_final"] = not websocket.is_speaking

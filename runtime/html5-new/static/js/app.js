@@ -422,6 +422,12 @@
                     this.stateManager.setConnectionState(ConnectionState.DISCONNECTED);
                 }
                 this._hideLoading();
+                console.log('ASRApp: WebSocket connection closed');
+            });
+
+            this.wsClient.on('reconnecting', ({ attempt }) => {
+                console.log(`ASRApp: WebSocket reconnecting, attempt ${attempt}`);
+                this._showLoading(`连接断开，正在重新连接(${attempt})...`);
             });
 
             this.wsClient.on('result', (result) => {
@@ -693,26 +699,28 @@
                 if (this.audioRecorder) {
                     await this.audioRecorder.stop();
                 }
+            } catch (error) {
+                console.error('ASRApp: Error stopping audio recorder:', error);
+            }
 
-                // 发送结束信号
+            // 发送结束信号（如果 WebSocket 连接可用）
+            try {
                 if (this.wsClient && this.wsClient.getState().connected) {
                     const sent = this.wsClient.sendEndSignal();
                     if (!sent) {
                         console.warn('ASRApp: Failed to send end signal');
                     }
                 } else {
-                    console.warn('ASRApp: WebSocket not connected, cannot send end signal');
+                    console.warn('ASRApp: WebSocket not connected, skipping end signal');
                 }
-
-                // 切换UI
-                this._switchToIdleUI();
-
-                console.log('ASRApp: Recording stopped');
             } catch (error) {
-                console.error('ASRApp: Error stopping recording:', error);
-                // 即使出错也要切换UI
-                this._switchToIdleUI();
+                console.warn('ASRApp: Error sending end signal:', error);
             }
+
+            // 切换UI
+            this._switchToIdleUI();
+
+            console.log('ASRApp: Recording stopped');
         }
 
         /**
