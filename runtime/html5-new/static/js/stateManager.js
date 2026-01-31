@@ -32,7 +32,7 @@
      * 状态管理器类
      */
     class StateManager {
-        constructor() {
+        constructor(options = {}) {
             // 当前状态
             this._connectionState = ConnectionState.DISCONNECTED;
             this._recordingState = RecordingState.IDLE;
@@ -44,6 +44,17 @@
             // 状态历史（用于调试和恢复）
             this._stateHistory = [];
             this._maxHistorySize = 50;
+            
+            // 防抖配置
+            this._debounceConfig = {
+                enabled: options.debounce !== false, // 默认启用
+                delay: options.debounceDelay || 50,  // 默认50ms
+                maxWait: options.debounceMaxWait || 200 // 最大等待时间
+            };
+            
+            // 防抖定时器
+            this._debounceTimers = new Map();
+            this._debouncePending = new Map();
             
             // 初始化
             this._init();
@@ -85,9 +96,64 @@
         }
 
         /**
-         * 触发事件
+         * 触发事件（带防抖）
          */
         _emit(eventName, data) {
+            // 如果防抖未启用，直接触发
+            if (!this._debounceConfig.enabled) {
+                this._doEmit(eventName, data);
+                return;
+            }
+            
+            // 清除之前的定时器
+            if (this._debounceTimers.has(eventName)) {
+                clearTimeout(this._debounceTimers.get(eventName));
+            }
+            
+            // 保存待触发的数据
+            this._debouncePending.set(eventName, data);
+            
+            // 检查是否需要立即触发（超过最大等待时间）
+            const pendingTime = this._debouncePending.get(`${eventName}_time`);
+            const now = Date.now();
+            
+            if (!pendingTime) {
+                this._debouncePending.set(`${eventName}_time`, now);
+            } else if (now - pendingTime > this._debounceConfig.maxWait) {
+                // 超过最大等待时间，立即触发
+                this._flushDebounce(eventName);
+                return;
+            }
+            
+            // 设置新的定时器
+            const timer = setTimeout(() => {
+                this._flushDebounce(eventName);
+            }, this._debounceConfig.delay);
+            
+            this._debounceTimers.set(eventName, timer);
+        }
+        
+        /**
+         * 立即执行防抖队列中的事件
+         */
+        _flushDebounce(eventName) {
+            const data = this._debouncePending.get(eventName);
+            if (data) {
+                this._doEmit(eventName, data);
+                this._debouncePending.delete(eventName);
+                this._debouncePending.delete(`${eventName}_time`);
+            }
+            
+            if (this._debounceTimers.has(eventName)) {
+                clearTimeout(this._debounceTimers.get(eventName));
+                this._debounceTimers.delete(eventName);
+            }
+        }
+        
+        /**
+         * 立即触发事件（内部方法）
+         */
+        _doEmit(eventName, data) {
             const listeners = this._listeners.get(eventName);
             if (listeners) {
                 listeners.forEach(callback => {
@@ -387,8 +453,32 @@
          * 销毁状态管理器
          */
         destroy() {
+            // 清除所有防抖定时器
+            this._debounceTimers.forEach(timer => clearTimeout(timer));
+            this._debounceTimers.clear();
+            this._debouncePending.clear();
+            
             this._listeners.clear();
             this._stateHistory = [];
+        }
+
+        /**
+         * 手动刷新所有防抖中的事件
+         */
+        flush() {
+            this._debounceTimers.forEach((timer, eventName) => {
+                this._flushDebounce(eventName);
+            });
+        }
+
+        /**
+         * 更新防抖配置
+         */
+        updateDebounceConfig(config) {
+            this._debounceConfig = {
+                ...this._debounceConfig,
+                ...config
+            };
         }
     }
 

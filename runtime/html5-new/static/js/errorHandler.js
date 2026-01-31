@@ -120,6 +120,7 @@
                 logErrors: true,
                 autoRecovery: true,
                 maxRetries: 3,
+                deduplicationWindow: 5000, // 错误去重时间窗口(ms)
                 ...options
             };
             
@@ -132,6 +133,12 @@
             // 错误历史
             this._errorHistory = [];
             this._maxHistorySize = 100;
+            
+            // 错误去重缓存
+            this._errorCache = new Map();
+            
+            // 错误上下文信息
+            this._contextInfo = this._collectContext();
         }
 
         /**
@@ -177,6 +184,68 @@
         }
 
         /**
+         * 收集错误上下文信息
+         */
+        _collectContext() {
+            return {
+                url: window.location.href,
+                userAgent: navigator.userAgent,
+                viewport: `${window.innerWidth}x${window.innerHeight}`,
+                screenResolution: `${window.screen.width}x${window.screen.height}`,
+                online: navigator.onLine,
+                language: navigator.language,
+                platform: navigator.platform,
+                cores: navigator.hardwareConcurrency || 'unknown',
+                memory: performance?.memory ? {
+                    usedJSHeapSize: Math.round(performance.memory.usedJSHeapSize / 1048576) + 'MB',
+                    totalJSHeapSize: Math.round(performance.memory.totalJSHeapSize / 1048576) + 'MB'
+                } : null,
+                connection: navigator.connection ? {
+                    effectiveType: navigator.connection.effectiveType,
+                    downlink: navigator.connection.downlink,
+                    rtt: navigator.connection.rtt
+                } : null,
+                timestamp: new Date().toISOString()
+            };
+        }
+
+        /**
+         * 检查是否是重复错误
+         */
+        _isDuplicateError(error) {
+            const key = `${error.type}-${error.message}`;
+            const lastTime = this._errorCache.get(key);
+            const now = Date.now();
+            const window = this.options.deduplicationWindow;
+            
+            if (lastTime && (now - lastTime) < window) {
+                console.log(`ErrorHandler: Duplicate error suppressed: ${key}`);
+                return true;
+            }
+            
+            this._errorCache.set(key, now);
+            
+            // 清理过期的缓存项
+            this._cleanupErrorCache();
+            
+            return false;
+        }
+
+        /**
+         * 清理错误缓存
+         */
+        _cleanupErrorCache() {
+            const now = Date.now();
+            const window = this.options.deduplicationWindow;
+            
+            for (const [key, timestamp] of this._errorCache.entries()) {
+                if ((now - timestamp) > window) {
+                    this._errorCache.delete(key);
+                }
+            }
+        }
+
+        /**
          * 记录错误历史
          */
         _logError(error) {
@@ -184,6 +253,7 @@
             
             const entry = {
                 timestamp: Date.now(),
+                context: this._contextInfo,
                 ...error
             };
             
@@ -195,6 +265,7 @@
             
             // 控制台输出
             console.error(`[ErrorHandler] ${error.type}:`, error.message, error.originalError);
+            console.error(`[ErrorHandler] Context:`, this._contextInfo);
         }
 
         /**
@@ -202,6 +273,14 @@
          */
         handle(error, context = {}) {
             const normalizedError = this._normalizeError(error, context);
+            
+            // 检查是否是重复错误
+            if (this._isDuplicateError(normalizedError)) {
+                return normalizedError;
+            }
+            
+            // 更新上下文信息（每次处理错误时刷新）
+            this._contextInfo = this._collectContext();
             
             // 记录错误
             this._logError(normalizedError);
@@ -530,6 +609,8 @@
             this._listeners.clear();
             this._retryCounts.clear();
             this._errorHistory = [];
+            this._errorCache.clear();
+            this._contextInfo = null;
         }
     }
 

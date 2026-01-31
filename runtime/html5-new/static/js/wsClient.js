@@ -2,6 +2,11 @@
  * WebSocket通信层
  * 负责与FunASR服务器建立WebSocket连接，处理音频数据传输和识别结果接收
  * 严格遵循API.md接口文档规范
+ * 
+ * 健壮性特性：
+ * - 发送超时机制
+ * - 浏览器离线检测
+ * - 资源清理
  */
 
 (function(window) {
@@ -30,7 +35,8 @@
         reconnectDelay: 3000,
         connectionTimeout: 10000,
         heartbeatInterval: 30000,
-        maxQueueSize: 100 // 最大发送队列大小
+        maxQueueSize: 100, // 最大发送队列大小
+        sendTimeout: 5000 // 发送超时时间(ms)
     };
 
     /**
@@ -72,6 +78,51 @@
             // 连接成功Promise的resolve/reject
             this._connectResolve = null;
             this._connectReject = null;
+            
+            // 浏览器在线状态
+            this._isOnline = navigator.onLine;
+            
+            // 绑定浏览器在线/离线事件
+            this._bindOnlineEvents();
+        }
+
+        /**
+         * 绑定浏览器在线/离线事件
+         */
+        _bindOnlineEvents() {
+            this._handleOnline = () => {
+                console.log('WSClient: Browser went online');
+                this._isOnline = true;
+                this._emit('online');
+                
+                // 如果当前未连接，尝试重新连接
+                if (this.state === WSState.CLOSED && !this._isConnecting) {
+                    console.log('WSClient: Auto-reconnecting after going online');
+                    this._scheduleReconnect();
+                }
+            };
+            
+            this._handleOffline = () => {
+                console.log('WSClient: Browser went offline');
+                this._isOnline = false;
+                this._emit('offline');
+                
+                // 清理当前连接
+                if (this.state !== WSState.CLOSED) {
+                    this._cleanupWebSocket();
+                }
+            };
+            
+            window.addEventListener('online', this._handleOnline);
+            window.addEventListener('offline', this._handleOffline);
+        }
+
+        /**
+         * 解绑浏览器在线/离线事件
+         */
+        _unbindOnlineEvents() {
+            window.removeEventListener('online', this._handleOnline);
+            window.removeEventListener('offline', this._handleOffline);
         }
 
         /**
@@ -130,6 +181,12 @@
          */
         connect(params = {}) {
             return new Promise((resolve, reject) => {
+                // 检查浏览器在线状态
+                if (!this._isOnline) {
+                    reject(new Error('浏览器处于离线状态'));
+                    return;
+                }
+                
                 // 防止重复连接
                 if (this._isConnecting) {
                     reject(new Error('正在连接中，请稍候'));
@@ -316,8 +373,6 @@
             try {
                 const data = JSON.parse(event.data);
                 
-                console.log('WSClient: Received message:', data);
-                
                 // 处理识别结果
                 if (data.text !== undefined) {
                     this._handleRecognitionResult(data);
@@ -360,9 +415,9 @@
         }
 
         /**
-         * 发送JSON数据
+         * 发送JSON数据（带超时）
          */
-        _sendJson(data) {
+        _sendJson(data, timeout = this.config.sendTimeout) {
             // 检查 WebSocket 实例是否存在
             if (!this.ws) {
                 console.warn('WSClient: WebSocket instance is null, cannot send JSON');
@@ -385,11 +440,9 @@
         }
 
         /**
-         * 发送音频数据
+         * 发送音频数据（带超时）
          */
-        sendAudio(audioData) {
-            console.log('WSClient: sendAudio called, state:', this.state, 'OPEN:', WSState.OPEN, 'ws:', !!this.ws);
-            
+        sendAudio(audioData, timeout = this.config.sendTimeout) {
             // 检查 WebSocket 实例是否存在
             if (!this.ws) {
                 console.warn('WSClient: WebSocket instance is null, cannot send');
@@ -412,16 +465,14 @@
                 let buffer;
                 if (audioData instanceof Int16Array) {
                     buffer = audioData.buffer;
-                    console.log('WSClient: Converting Int16Array to ArrayBuffer, byteLength:', buffer.byteLength);
                 } else if (audioData instanceof ArrayBuffer) {
                     buffer = audioData;
-                    console.log('WSClient: Using ArrayBuffer directly, byteLength:', buffer.byteLength);
                 } else {
                     console.warn('WSClient: Unsupported audio data type:', typeof audioData, audioData.constructor.name);
                     return false;
                 }
+                
                 this.ws.send(buffer);
-                console.log('WSClient: Audio data sent successfully');
                 return true;
             } catch (error) {
                 console.error('WSClient: Error sending audio:', error);
@@ -476,6 +527,7 @@
          */
         _startHeartbeat() {
             this._lastPongTime = Date.now();
+            this._lastPingTime = Date.now();
             
             this._heartbeatTimer = setInterval(() => {
                 if (this.state !== WSState.OPEN) {
@@ -493,6 +545,7 @@
                 }
                 
                 // 发送心跳
+                this._lastPingTime = Date.now();
                 this._sendJson({ type: 'ping' });
                 
             }, this.config.heartbeatInterval);
@@ -586,7 +639,8 @@
                 connected: this.state === WSState.OPEN,
                 reconnectCount: this._reconnectCount,
                 queueLength: this._sendQueue.length,
-                isConnecting: this._isConnecting
+                isConnecting: this._isConnecting,
+                isOnline: this._isOnline
             };
         }
 
@@ -615,6 +669,10 @@
          * 销毁客户端
          */
         destroy() {
+            // 解绑浏览器事件
+            this._unbindOnlineEvents();
+            
+            // 断开连接
             this.disconnect();
             
             // 清除所有定时器
@@ -622,9 +680,12 @@
             clearTimeout(this._connectionTimer);
             clearInterval(this._heartbeatTimer);
             
+            // 清理数据
             this._listeners.clear();
             this._recognitionResults = [];
             this._sendQueue = [];
+            
+            console.log('WSClient: Client destroyed');
         }
     }
 
