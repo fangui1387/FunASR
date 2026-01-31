@@ -153,7 +153,7 @@
                     // 获取麦克风权限
                     navigator.mediaDevices.getUserMedia({ 
                         audio: {
-                            sampleRate: 48000, // 浏览器通常返回 48kHz
+                            sampleRate: 16000, // 浏览器通常返回 48kHz
                             channelCount: 1,
                             echoCancellation: false,
                             noiseSuppression: false,
@@ -165,7 +165,7 @@
                         // 创建 AudioContext
                         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
                         this.audioContext = new AudioContextClass({
-                            sampleRate: 48000 // 使用浏览器默认采样率
+                            sampleRate: 16000 // 使用浏览器默认采样率
                         });
                         
                         // 创建媒体源
@@ -224,7 +224,7 @@
                 const inputData = inputBuffer.getChannelData(0);
                 
                 // 重采样到 16kHz
-                const resampledData = this._resample(inputData, 48000, this.config.sampleRate);
+                const resampledData = this._resample(inputData, 16000, this.config.sampleRate);
                 
                 // 转换为 Int16Array
                 const int16Data = this._floatToInt16(resampledData);
