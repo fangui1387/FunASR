@@ -141,8 +141,323 @@
     <script src="js/audioRecorder.js"></script>
     <script src="js/app.js"></script>
 	<script>
-		// 初始化
-		const vConsole = new VConsole();
+        // 初始化 vConsole
+        const vConsole = new VConsole();
+
+        // ==========================================
+        // FunASR SDK 集成示例
+        // 其他H5页面可以参考此集成方式
+        // ==========================================
+
+        // DOM元素引用
+        const elements = {
+            wsUrl: document.getElementById('wsUrl'),
+            recognitionMode: document.getElementById('recognitionMode'),
+            hotwords: document.getElementById('hotwords'),
+            useItn: document.getElementById('useItn'),
+            configContent: document.getElementById('configContent'),
+            toggleConfigBtn: document.getElementById('toggleConfigBtn'),
+            recordBtn: document.getElementById('recordBtn'),
+            recordStopBtn: document.getElementById('recordStopBtn'),
+            recordIdle: document.getElementById('recordIdle'),
+            recordActive: document.getElementById('recordActive'),
+            recordingTime: document.getElementById('recordingTime'),
+            statusIndicator: document.getElementById('statusIndicator'),
+            statusText: document.getElementById('statusText'),
+            resultContent: document.getElementById('resultContent'),
+            resultMeta: document.getElementById('resultMeta'),
+            loadingMask: document.getElementById('loadingMask'),
+            errorToast: document.getElementById('errorToast'),
+            errorMessage: document.getElementById('errorMessage'),
+            errorCloseBtn: document.getElementById('errorCloseBtn'),
+            clearResultBtn: document.getElementById('clearResultBtn'),
+            testConnectionBtn: document.getElementById('testConnectionBtn'),
+            resetConfigBtn: document.getElementById('resetConfigBtn')
+        };
+
+        // 创建 FunASRController 实例
+        const asrController = new FunASRController({
+            wsUrl: elements.wsUrl.value,
+            mode: elements.recognitionMode.value,
+            itn: elements.useItn.checked
+        });
+
+        // 录音计时器
+        let recordingTimer = null;
+        let recordingSeconds = 0;
+
+        // ==========================================
+        // 事件绑定：识别结果
+        // ==========================================
+
+        // 实时识别结果
+        asrController.onResult((result) => {
+            console.log('[ASR Result]', result);
+            
+            // 移除占位符
+            const placeholder = elements.resultContent.querySelector('.result-placeholder');
+            if (placeholder) {
+                placeholder.remove();
+            }
+
+            // 获取当前模式
+            const currentMode = elements.recognitionMode.value;
+            
+            // 根据模式显示结果
+            if (currentMode === 'offline') {
+                // offline模式：直接显示
+                elements.resultContent.innerHTML = `<div class="result-text">${escapeHtml(result.text)}</div>`;
+            } else {
+                // 2pass/online模式：显示拼接后的完整文本
+                elements.resultContent.innerHTML = `<div class="result-text" style="color: #667eea;">${escapeHtml(result.fullText)}</div>`;
+            }
+
+            // 更新元信息
+            elements.resultMeta.style.display = 'block';
+            if (currentMode === '2pass') {
+                elements.resultMeta.textContent = '2pass: 实时识别中...';
+            } else if (currentMode === 'online') {
+                elements.resultMeta.textContent = 'online: 实时识别中...';
+            } else {
+                elements.resultMeta.textContent = '识别中...';
+            }
+        });
+
+        // 识别完成
+        asrController.onComplete((result) => {
+            console.log('[ASR Complete]', result);
+
+            const currentMode = elements.recognitionMode.value;
+
+            // 显示最终结果
+            if (result.fullText || result.text) {
+                elements.resultContent.innerHTML = `<div class="result-text">${escapeHtml(result.fullText || result.text)}</div>`;
+            }
+
+            // 更新元信息
+            elements.resultMeta.style.display = 'block';
+            if (currentMode === 'offline') {
+                elements.resultMeta.textContent = '✓ 离线识别完成';
+            } else if (currentMode === '2pass') {
+                elements.resultMeta.textContent = '✓ 2pass 识别完成（离线精识别）';
+            } else if (currentMode === 'online') {
+                elements.resultMeta.textContent = '✓ 实时识别完成';
+            }
+
+            // 停止录音UI（仅在非2pass模式下立即重置，2pass模式等待用户手动停止或录音超时）
+            // 2pass模式下，complete事件可能只是一句话的识别完成，不是整个录音结束
+            if (currentMode !== '2pass' && currentMode !== 'online') {
+                stopRecordingUI();
+            }
+        });
+
+        // 错误处理
+        asrController.onError((error) => {
+            console.error('[ASR Error]', error);
+            showError(error.message || '发生错误');
+            stopRecordingUI();
+        });
+
+        // 连接状态
+        asrController.onConnecting(() => {
+            updateStatus('connecting', '连接中...');
+            showLoading();
+        });
+
+        asrController.onConnected(() => {
+            updateStatus('connected', '已连接');
+            hideLoading();
+        });
+
+        asrController.onDisconnected(() => {
+            updateStatus('', '未连接');
+        });
+
+        // 录音状态
+        asrController.onStart(() => {
+            updateStatus('recording', '正在录音...');
+            startRecordingUI();
+        });
+
+        asrController.onStop(() => {
+            updateStatus('', '准备就绪');
+            stopRecordingUI();
+        });
+
+        // ==========================================
+        // UI辅助函数
+        // ==========================================
+
+        function updateStatus(type, message) {
+            elements.statusText.textContent = message;
+            elements.statusIndicator.className = 'status-indicator ' + type;
+        }
+
+        function startRecordingUI() {
+            elements.recordIdle.style.display = 'none';
+            elements.recordActive.style.display = 'flex';
+            recordingSeconds = 0;
+            updateRecordingTime();
+            recordingTimer = setInterval(() => {
+                recordingSeconds++;
+                updateRecordingTime();
+            }, 1000);
+        }
+
+        function stopRecordingUI() {
+            elements.recordIdle.style.display = 'flex';
+            elements.recordActive.style.display = 'none';
+            if (recordingTimer) {
+                clearInterval(recordingTimer);
+                recordingTimer = null;
+            }
+        }
+
+        function updateRecordingTime() {
+            const mins = Math.floor(recordingSeconds / 60).toString().padStart(2, '0');
+            const secs = (recordingSeconds % 60).toString().padStart(2, '0');
+            elements.recordingTime.textContent = `${mins}:${secs}`;
+        }
+
+        function showLoading() {
+            elements.loadingMask.style.display = 'flex';
+        }
+
+        function hideLoading() {
+            elements.loadingMask.style.display = 'none';
+        }
+
+        function showError(message) {
+            elements.errorMessage.textContent = message;
+            elements.errorToast.style.display = 'block';
+            setTimeout(() => {
+                elements.errorToast.style.display = 'none';
+            }, 5000);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ==========================================
+        // UI事件绑定
+        // ==========================================
+
+        // 配置面板切换
+        elements.toggleConfigBtn.addEventListener('click', () => {
+            const isExpanded = elements.configContent.classList.toggle('expanded');
+            elements.toggleConfigBtn.querySelector('.icon').textContent = isExpanded ? '🔼' : '⚙️';
+        });
+
+        // 开始录音按钮
+        elements.recordBtn.addEventListener('click', async () => {
+            try {
+                // 更新配置
+                asrController.setUrl(elements.wsUrl.value);
+                asrController.setMode(elements.recognitionMode.value);
+                asrController.updateConfig({
+                    itn: elements.useItn.checked,
+                    hotwords: elements.hotwords.value || null
+                });
+
+                // 清空之前的结果
+                elements.resultContent.innerHTML = '<div class="result-placeholder">识别内容将显示在这里...</div>';
+                elements.resultMeta.style.display = 'none';
+
+                // 开始录音
+                await asrController.startRecording();
+            } catch (error) {
+                showError(error.message);
+            }
+        });
+
+        // 停止录音按钮
+        elements.recordStopBtn.addEventListener('click', async () => {
+            await asrController.stopRecording();
+        });
+
+        // 清空结果按钮
+        elements.clearResultBtn.addEventListener('click', () => {
+            elements.resultContent.innerHTML = '<div class="result-placeholder">识别内容将显示在这里...</div>';
+            elements.resultMeta.style.display = 'none';
+            asrController.clearResults();
+        });
+
+        // 错误提示关闭按钮
+        elements.errorCloseBtn.addEventListener('click', () => {
+            elements.errorToast.style.display = 'none';
+        });
+
+        // 测试连接按钮
+        elements.testConnectionBtn.addEventListener('click', async () => {
+            try {
+                asrController.setUrl(elements.wsUrl.value);
+                asrController.setMode(elements.recognitionMode.value);
+                await asrController.connect();
+                updateStatus('connected', '连接成功');
+            } catch (error) {
+                showError('连接失败: ' + error.message);
+            }
+        });
+
+        // 重置配置按钮
+        elements.resetConfigBtn.addEventListener('click', () => {
+            elements.wsUrl.value = 'ws://192.168.1.17:10095/';
+            elements.recognitionMode.value = 'offline';
+            elements.hotwords.value = '';
+            elements.useItn.checked = true;
+            
+            asrController.setUrl(elements.wsUrl.value);
+            asrController.setMode(elements.recognitionMode.value);
+            asrController.updateConfig({
+                itn: true,
+                hotwords: null
+            });
+            
+            updateStatus('', '准备就绪');
+        });
+
+        // 识别模式变更
+        elements.recognitionMode.addEventListener('change', () => {
+            const mode = elements.recognitionMode.value;
+            asrController.setMode(mode);
+            
+            const modeNames = {
+                'offline': '离线模式',
+                '2pass': '两遍模式',
+                'online': '实时模式'
+            };
+            
+            // 显示提示
+            let toast = document.getElementById('toast-message');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'toast-message';
+                toast.style.cssText = `
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    background: rgba(0, 0, 0, 0.8);
+                    color: white;
+                    padding: 12px 24px;
+                    border-radius: 8px;
+                    font-size: 14px;
+                    z-index: 9999;
+                    pointer-events: none;
+                    opacity: 0;
+                    transition: opacity 0.3s;
+                `;
+                document.body.appendChild(toast);
+            }
+            toast.textContent = `已切换到${modeNames[mode] || mode}`;
+            toast.style.opacity = '1';
+            setTimeout(() => {
+                toast.style.opacity = '0';
+            }, 2000);
+        });
 	</script>
 </body>
 </html>

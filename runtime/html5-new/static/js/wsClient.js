@@ -327,14 +327,22 @@
             this._isConnecting = false;
             this._endSignalSent = false; // 连接成功后重置结束信号标志
             
-            console.log('WSClient: Connection opened');
+            console.log('[WSClient Debug] Connection opened');
             
             // 发送连接参数
+            let paramsSent = false;
+            console.log('[WSClient Debug] _connectionParams:', JSON.stringify(this._connectionParams));
             if (this._connectionParams) {
                 const sent = this._sendJson(this._connectionParams);
-                if (!sent) {
-                    console.warn('WSClient: Failed to send connection params');
+                console.log('[WSClient Debug] _sendJson result:', sent);
+                if (sent) {
+                    paramsSent = true;
+                    console.log('[WSClient Debug] Connection params sent:', JSON.stringify(this._connectionParams));
+                } else {
+                    console.warn('[WSClient Debug] Failed to send connection params');
                 }
+            } else {
+                console.warn('[WSClient Debug] _connectionParams is undefined');
             }
             
             // 启动心跳
@@ -344,7 +352,13 @@
             this._processSendQueue();
             
             this._emit('open');
-            this._emit('connected');
+            
+            // 只有在连接参数发送成功后才触发 connected 事件
+            // 添加延迟确保参数先到达服务器
+            const delay = paramsSent ? 500 : 100;
+            setTimeout(() => {
+                this._emit('connected');
+            }, delay);
             
             if (this._connectResolve) {
                 this._connectResolve();
@@ -433,9 +447,12 @@
         _handleRecognitionResult(data) {
             console.log('[WSClient Debug] ========== _handleRecognitionResult ==========');
             console.log('[WSClient Debug] 原始data:', JSON.stringify(data));
-            
+
+            // 使用服务器返回的mode
+            const resultMode = data.mode || 'offline';
+
             const result = {
-                mode: data.mode || 'offline',
+                mode: resultMode,
                 wavName: data.wav_name,
                 text: data.text,
                 isFinal: data.is_final || false,
@@ -443,28 +460,27 @@
                 stampSents: data.stamp_sents,
                 receiveTime: Date.now()
             };
-            
+
             console.log('[WSClient Debug] 解析后的result:', JSON.stringify(result));
             console.log('[WSClient Debug] result.mode:', result.mode);
-                        
+            console.log('[WSClient Debug] this.config.mode:', this.config.mode);
+
             this._recognitionResults.push(result);
-            
+
+            // 触发result事件，用于实时显示
             this._emit('result', result);
-            
-            // 判断是否为最终结果：
-            // 1. is_final 为 true（服务器明确标记）
-            // 2. mode 为 "2pass-offline"（2pass模式的第二遍离线结果）
-            // 3. offline 模式下收到结果（离线模式只有最终结果）
-            const isComplete = result.isFinal === true || 
-                              result.mode === '2pass-offline' ||
-                              (this.config.mode === 'offline' && result.text);
-            
+
+            // 判断是否为最终结果（仅触发complete事件，不影响实时显示）：
+            // 1. mode 为 "2pass-offline"（2pass模式的第二遍离线精识别结果）
+            // 注意：不依赖 is_final，因为服务器可能在2pass-online模式下也设置is_final
+            const isComplete = result.mode === '2pass-offline';
+
             if (isComplete) {
-                console.log('[WSClient Debug] 触发 complete 事件 mode==2pass-offline');
+                console.log('[WSClient Debug] 触发 complete 事件');
                 // 重置结束信号标志
                 this._endSignalSent = false;
                 this._emit('complete', result);
-            } 
+            }
         }
 
         /**
