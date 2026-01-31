@@ -11,7 +11,7 @@
         sampleRate: 16000,
         bufferSize: 4096,
         chunkDuration: 100, // 每个数据块的时长(ms)
-        maxDuration: 60000  // 最大录音时长(ms)
+        maxDuration: 600000  // 最大录音时长(ms) 10分钟
     };
 
     // 录音状态枚举
