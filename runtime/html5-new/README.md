@@ -119,7 +119,7 @@ if (!support.supported) {
 **使用示例：**
 ```javascript
 const wsClient = new WSClient({
-    url: 'wss://192.168.43.12:10095/',
+    url: 'wss://192.168.1.17:10095/',
     reconnectAttempts: 3,
     reconnectDelay: 3000
 });

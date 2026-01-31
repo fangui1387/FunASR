@@ -221,7 +221,7 @@ html, body {
 
 /* 识别结果面板 */
 .result-panel {
-    flex: 1;
+    /* flex: 1; */
     background: #fff;
     margin: 16px;
     border-radius: 12px;
@@ -263,7 +263,8 @@ html, body {
     flex: 1;
     padding: 20px;
     overflow-y: auto;
-    min-height: 150px;
+    min-height: 100px;
+    max-height: 100px;
 }
 
 .result-placeholder {

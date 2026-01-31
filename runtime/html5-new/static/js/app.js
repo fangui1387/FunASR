@@ -583,7 +583,7 @@
          */
         _resetConfig() {
             if (this.elements.wsUrl) {
-                this.elements.wsUrl.value = 'wss://192.168.43.12:10095/';
+                this.elements.wsUrl.value = 'wss://192.168.1.17:10095/';
             }
             if (this.elements.hotwords) {
                 this.elements.hotwords.value = '';
