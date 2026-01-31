@@ -45,8 +45,16 @@
      */
     class WSClient {
         constructor(options = {}) {
-            this.config = { ...DEFAULT_CONFIG, ...options };
+            // 参数验证
+            if (options !== null && typeof options !== 'object') {
+                throw new TypeError('WSClient: options must be an object');
+            }
+
+            this.config = { ...DEFAULT_CONFIG, ...(options || {}) };
             
+            // 验证配置
+            this._validateConfig();
+
             // WebSocket实例
             this.ws = null;
             this.state = WSState.CLOSED;
@@ -62,6 +70,7 @@
             // 心跳相关
             this._heartbeatTimer = null;
             this._lastPongTime = 0;
+            this._lastPingTime = 0;
             
             // 数据缓冲
             this._sendQueue = [];
@@ -84,24 +93,74 @@
             this._connectResolve = null;
             this._connectReject = null;
             
+            // 销毁标志
+            this._isDestroyed = false;
+            
             // 浏览器在线状态
-            this._isOnline = navigator.onLine;
+            this._isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
             
             // 绑定浏览器在线/离线事件
             this._bindOnlineEvents();
         }
 
         /**
+         * 验证配置参数
+         * @private
+         */
+        _validateConfig() {
+            // 验证URL
+            if (!this.config.url || typeof this.config.url !== 'string') {
+                throw new Error('WSClient: url is required and must be a string');
+            }
+
+            // 验证数值参数
+            if (typeof this.config.reconnectAttempts !== 'number' || this.config.reconnectAttempts < 0) {
+                console.warn('WSClient: Invalid reconnectAttempts, using default 3');
+                this.config.reconnectAttempts = 3;
+            }
+
+            if (typeof this.config.reconnectDelay !== 'number' || this.config.reconnectDelay < 0) {
+                console.warn('WSClient: Invalid reconnectDelay, using default 3000');
+                this.config.reconnectDelay = 3000;
+            }
+
+            if (typeof this.config.connectionTimeout !== 'number' || this.config.connectionTimeout < 0) {
+                console.warn('WSClient: Invalid connectionTimeout, using default 10000');
+                this.config.connectionTimeout = 10000;
+            }
+
+            if (typeof this.config.heartbeatInterval !== 'number' || this.config.heartbeatInterval < 0) {
+                console.warn('WSClient: Invalid heartbeatInterval, using default 30000');
+                this.config.heartbeatInterval = 30000;
+            }
+        }
+
+        /**
+         * 检查实例是否已被销毁
+         * @private
+         */
+        _checkDestroyed() {
+            if (this._isDestroyed) {
+                throw new Error('WSClient: Instance has been destroyed');
+            }
+        }
+
+        /**
          * 绑定浏览器在线/离线事件
          */
         _bindOnlineEvents() {
+            // 检查是否在浏览器环境中
+            if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
+                return;
+            }
+
             this._handleOnline = () => {
                 console.log('WSClient: Browser went online');
                 this._isOnline = true;
                 this._emit('online');
                 
                 // 如果当前未连接，尝试重新连接
-                if (this.state === WSState.CLOSED && !this._isConnecting) {
+                if (this.state === WSState.CLOSED && !this._isConnecting && !this._isDestroyed) {
                     console.log('WSClient: Auto-reconnecting after going online');
                     this._scheduleReconnect();
                 }
@@ -113,7 +172,7 @@
                 this._emit('offline');
                 
                 // 清理当前连接
-                if (this.state !== WSState.CLOSED) {
+                if (this.state !== WSState.CLOSED && !this._isDestroyed) {
                     this._cleanupWebSocket();
                 }
             };
@@ -126,8 +185,16 @@
          * 解绑浏览器在线/离线事件
          */
         _unbindOnlineEvents() {
-            window.removeEventListener('online', this._handleOnline);
-            window.removeEventListener('offline', this._handleOffline);
+            if (typeof window === 'undefined' || typeof window.removeEventListener !== 'function') {
+                return;
+            }
+            
+            if (this._handleOnline) {
+                window.removeEventListener('online', this._handleOnline);
+            }
+            if (this._handleOffline) {
+                window.removeEventListener('offline', this._handleOffline);
+            }
         }
 
         /**
@@ -195,45 +262,56 @@
 
         /**
          * 建立WebSocket连接
+         * @param {Object} params - 连接参数
+         * @returns {Promise} 连接结果
          */
         connect(params = {}) {
+            this._checkDestroyed();
+
             return new Promise((resolve, reject) => {
-                // 检查浏览器在线状态
-                if (!this._isOnline) {
-                    reject(new Error('浏览器处于离线状态'));
-                    return;
-                }
-                
-                // 防止重复连接
-                if (this._isConnecting) {
-                    reject(new Error('正在连接中，请稍候'));
-                    return;
-                }
+                try {
+                    // 检查浏览器在线状态
+                    if (!this._isOnline) {
+                        reject(new Error('浏览器处于离线状态'));
+                        return;
+                    }
+                    
+                    // 防止重复连接
+                    if (this._isConnecting) {
+                        reject(new Error('正在连接中，请稍候'));
+                        return;
+                    }
 
-                // 如果已经连接，直接返回成功
-                if (this.ws && this.state === WSState.OPEN) {
-                    resolve();
-                    return;
-                }
+                    // 如果已经连接，直接返回成功
+                    if (this.ws && this.state === WSState.OPEN) {
+                        resolve();
+                        return;
+                    }
 
-                // 验证URL
-                const urlValidation = this._validateUrl(this.config.url);
-                if (!urlValidation.valid) {
-                    reject(new Error(urlValidation.error));
-                    return;
-                }
+                    // 验证URL
+                    const urlValidation = this._validateUrl(this.config.url);
+                    if (!urlValidation.valid) {
+                        reject(new Error(urlValidation.error));
+                        return;
+                    }
 
-                this._isConnecting = true;
-                this._connectResolve = resolve;
-                this._connectReject = reject;
+                    this._isConnecting = true;
+                    this._connectResolve = resolve;
+                    this._connectReject = reject;
 
-                // 如果正在关闭，等待关闭完成后再连接
-                if (this.state === WSState.CLOSING) {
-                    setTimeout(() => {
+                    // 如果正在关闭，等待关闭完成后再连接
+                    if (this.state === WSState.CLOSING) {
+                        setTimeout(() => {
+                            if (!this._isDestroyed) {
+                                this._doConnect(params);
+                            }
+                        }, 100);
+                    } else {
                         this._doConnect(params);
-                    }, 100);
-                } else {
-                    this._doConnect(params);
+                    }
+                } catch (error) {
+                    this._isConnecting = false;
+                    reject(error);
                 }
             });
         }
@@ -261,30 +339,36 @@
 
         /**
          * 执行连接
+         * @param {Object} params - 连接参数
+         * @private
          */
         _doConnect(params) {
-            // 如果已连接，先断开
-            if (this.ws) {
-                this._cleanupWebSocket();
+            if (this._isDestroyed) {
+                return;
             }
 
-            // 保存连接参数
-            this._connectionParams = {
-                mode: params.mode || this.config.mode,
-                wav_name: params.wavName || this.config.wavName,
-                wav_format: params.wavFormat || this.config.wavFormat,
-                audio_fs: params.audioFs || this.config.audioFs,
-                is_speaking: true,
-                chunk_size: this.config.chunkSize,
-                chunk_interval: this.config.chunkInterval,
-                itn: params.itn !== undefined ? params.itn : this.config.itn,
-                hotwords: params.hotwords || this.config.hotwords
-            };
-
-            this.state = WSState.CONNECTING;
-            this._emit('connecting');
-
             try {
+                // 如果已连接，先断开
+                if (this.ws) {
+                    this._cleanupWebSocket();
+                }
+
+                // 保存连接参数
+                this._connectionParams = {
+                    mode: params.mode || this.config.mode,
+                    wav_name: params.wavName || this.config.wavName,
+                    wav_format: params.wavFormat || this.config.wavFormat,
+                    audio_fs: params.audioFs || this.config.audioFs,
+                    is_speaking: true,
+                    chunk_size: this.config.chunkSize,
+                    chunk_interval: this.config.chunkInterval,
+                    itn: params.itn !== undefined ? params.itn : this.config.itn,
+                    hotwords: params.hotwords || this.config.hotwords
+                };
+
+                this.state = WSState.CONNECTING;
+                this._emit('connecting');
+
                 // 构建带查询参数的 URL
                 const wsUrl = this._buildWebSocketUrl(
                     this.config.url, 
@@ -427,10 +511,31 @@
 
         /**
          * 消息接收处理
+         * @param {MessageEvent} event - WebSocket消息事件
+         * @private
          */
         _onMessage(event) {
             try {
-                const data = JSON.parse(event.data);
+                // 验证事件数据
+                if (!event || !event.data) {
+                    console.warn('WSClient: Received empty message event');
+                    return;
+                }
+
+                let data;
+                try {
+                    data = JSON.parse(event.data);
+                } catch (parseError) {
+                    console.error('WSClient: Failed to parse message:', parseError);
+                    this._emit('error', new Error(`消息解析失败: ${parseError.message}`));
+                    return;
+                }
+                
+                // 验证解析后的数据
+                if (!data || typeof data !== 'object') {
+                    console.warn('WSClient: Received invalid message data');
+                    return;
+                }
                 
                 // 处理识别结果
                 if (data.text !== undefined) {
@@ -445,85 +550,134 @@
                 this._emit('message', data);
                 
             } catch (error) {
-                console.error('WSClient: Error parsing message:', error);
-                this._emit('error', new Error('消息解析失败'));
+                console.error('WSClient: Error handling message:', error);
+                this._emit('error', new Error(`消息处理失败: ${error.message}`));
             }
         }
 
         /**
          * 处理识别结果
+         * @param {Object} data - 服务器返回的原始数据
+         * @private
          */
         _handleRecognitionResult(data) {
-            console.log('[WSClient Debug] ========== _handleRecognitionResult ==========');
-            console.log('[WSClient Debug] 原始data:', JSON.stringify(data));
+            try {
+                // 参数验证
+                if (!data || typeof data !== 'object') {
+                    console.warn('WSClient: Invalid recognition data received');
+                    return;
+                }
 
-            // 使用服务器返回的mode
-            const resultMode = data.mode || 'offline';
+                console.log('[WSClient Debug] ========== _handleRecognitionResult ==========');
+                console.log('[WSClient Debug] 原始data:', JSON.stringify(data));
 
-            const result = {
-                mode: resultMode,
-                wavName: data.wav_name,
-                text: data.text,
-                isFinal: data.is_final || false,
-                timestamp: data.timestamp,
-                stampSents: data.stamp_sents,
-                receiveTime: Date.now()
-            };
+                // 使用服务器返回的mode
+                const resultMode = data.mode || 'offline';
 
-            console.log('[WSClient Debug] 解析后的result:', JSON.stringify(result));
-            console.log('[WSClient Debug] result.mode:', result.mode);
-            console.log('[WSClient Debug] this.config.mode:', this.config.mode);
+                const result = {
+                    mode: resultMode,
+                    wavName: data.wav_name,
+                    text: data.text,
+                    isFinal: data.is_final || false,
+                    timestamp: data.timestamp,
+                    stampSents: data.stamp_sents,
+                    receiveTime: Date.now()
+                };
 
-            this._recognitionResults.push(result);
-            // 限制结果数组大小防止内存溢出
-            if (this._recognitionResults.length > this._maxResultsSize) {
-                this._recognitionResults = this._recognitionResults.slice(-this._maxResultsSize);
-            }
+                console.log('[WSClient Debug] 解析后的result:', JSON.stringify(result));
+                console.log('[WSClient Debug] result.mode:', result.mode);
+                console.log('[WSClient Debug] this.config.mode:', this.config.mode);
 
-            // 触发result事件，用于实时显示
-            this._emit('result', result);
+                this._recognitionResults.push(result);
+                // 限制结果数组大小防止内存溢出
+                if (this._recognitionResults.length > this._maxResultsSize) {
+                    this._recognitionResults = this._recognitionResults.slice(-this._maxResultsSize);
+                }
 
-            // 判断是否为最终结果（仅触发complete事件，不影响实时显示）：
-            // 1. mode 为 "2pass-offline"（2pass模式的第二遍离线精识别结果）
-            // 注意：不依赖 is_final，因为服务器可能在2pass-online模式下也设置is_final
-            const isComplete = result.mode === '2pass-offline';
+                // 触发result事件，用于实时显示
+                this._emit('result', result);
 
-            if (isComplete) {
-                console.log('[WSClient Debug] 触发 complete 事件');
-                // 重置结束信号标志
-                this._endSignalSent = false;
-                this._emit('complete', result);
+                // 判断是否为最终结果（仅触发complete事件，不影响实时显示）：
+                // 1. mode 为 "2pass-offline"（2pass模式的第二遍离线精识别结果）
+                // 注意：不依赖 is_final，因为服务器可能在2pass-online模式下也设置is_final
+                const isComplete = result.mode === '2pass-offline';
+
+                if (isComplete) {
+                    console.log('[WSClient Debug] 触发 complete 事件');
+                    // 重置结束信号标志
+                    this._endSignalSent = false;
+                    this._emit('complete', result);
+                }
+            } catch (error) {
+                console.error('WSClient: Error handling recognition result:', error);
+                this._emit('error', new Error(`处理识别结果失败: ${error.message}`));
             }
         }
 
         /**
          * 发送JSON数据（带超时）
+         * @param {Object} data - 要发送的数据
+         * @param {number} timeout - 超时时间（毫秒）
+         * @returns {boolean} 发送是否成功
          */
         _sendJson(data, timeout = this.config.sendTimeout) {
+            // 检查实例是否已销毁
+            if (this._isDestroyed) {
+                console.warn('WSClient: Cannot send data, instance destroyed');
+                return false;
+            }
+
             // 检查 WebSocket 实例是否存在
             if (!this.ws) {
+                console.warn('WSClient: Cannot send data, WebSocket not initialized');
                 return false;
             }
             
             if (this.state !== WSState.OPEN) {
+                console.warn('WSClient: Cannot send data, WebSocket not open');
                 return false;
             }
             
             try {
-                const jsonStr = JSON.stringify(data);
+                // 验证数据可以序列化
+                let jsonStr;
+                try {
+                    jsonStr = JSON.stringify(data);
+                } catch (serializeError) {
+                    console.error('WSClient: Failed to serialize data:', serializeError);
+                    return false;
+                }
+
                 this.ws.send(jsonStr);
                 return true;
             } catch (error) {
+                console.error('WSClient: Failed to send JSON data:', error);
                 return false;
             }
         }
 
         /**
          * 发送音频数据（带超时）
+         * @param {Int16Array|ArrayBuffer} audioData - 音频数据
+         * @param {number} timeout - 超时时间（毫秒）
+         * @returns {boolean} 发送是否成功
          */
         sendAudio(audioData, timeout = this.config.sendTimeout) {
+            // 检查实例是否已销毁
+            if (this._isDestroyed) {
+                console.warn('WSClient: Cannot send audio, instance destroyed');
+                return false;
+            }
+
+            // 验证音频数据
+            if (!audioData) {
+                console.warn('WSClient: Cannot send audio, data is empty');
+                return false;
+            }
+
             // 检查 WebSocket 实例是否存在
             if (!this.ws) {
+                console.warn('WSClient: Cannot send audio, WebSocket not initialized');
                 return false;
             }
             
@@ -543,12 +697,14 @@
                 } else if (audioData instanceof ArrayBuffer) {
                     buffer = audioData;
                 } else {
+                    console.warn('WSClient: Invalid audio data type, expected Int16Array or ArrayBuffer');
                     return false;
                 }
                 
                 this.ws.send(buffer);
                 return true;
             } catch (error) {
+                console.error('WSClient: Failed to send audio data:', error);
                 // 发送失败，加入队列稍后重试
                 if (this._sendQueue.length < this.config.maxQueueSize) {
                     this._sendQueue.push(audioData);
@@ -773,23 +929,48 @@
          * 销毁客户端
          */
         destroy() {
-            // 解绑浏览器事件
-            this._unbindOnlineEvents();
-            
-            // 断开连接
-            this.disconnect();
-            
-            // 清除所有定时器
-            clearTimeout(this._reconnectTimer);
-            clearTimeout(this._connectionTimer);
-            clearInterval(this._heartbeatTimer);
-            
-            // 清理数据
-            this._listeners.clear();
-            this._recognitionResults = [];
-            this._sendQueue = [];
-            
-            console.log('WSClient: Client destroyed');
+            if (this._isDestroyed) {
+                return;
+            }
+
+            this._isDestroyed = true;
+
+            try {
+                // 解绑浏览器事件
+                this._unbindOnlineEvents();
+                
+                // 断开连接
+                this.disconnect();
+                
+                // 清除所有定时器
+                if (this._reconnectTimer) {
+                    clearTimeout(this._reconnectTimer);
+                    this._reconnectTimer = null;
+                }
+                if (this._connectionTimer) {
+                    clearTimeout(this._connectionTimer);
+                    this._connectionTimer = null;
+                }
+                if (this._heartbeatTimer) {
+                    clearInterval(this._heartbeatTimer);
+                    this._heartbeatTimer = null;
+                }
+                
+                // 清理数据
+                this._listeners.clear();
+                this._recognitionResults = [];
+                this._sendQueue = [];
+                
+                // 清理引用
+                this.ws = null;
+                this._connectionParams = null;
+                this._connectResolve = null;
+                this._connectReject = null;
+                
+                console.log('WSClient: Client destroyed');
+            } catch (error) {
+                console.error('WSClient: Error during destroy:', error);
+            }
         }
     }
 

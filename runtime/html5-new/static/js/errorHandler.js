@@ -115,14 +115,22 @@
      */
     class ErrorHandler {
         constructor(options = {}) {
+            // 参数验证
+            if (options !== null && typeof options !== 'object') {
+                throw new TypeError('ErrorHandler: options must be an object');
+            }
+
             this.options = {
                 showToast: true,
                 logErrors: true,
                 autoRecovery: true,
                 maxRetries: 3,
                 deduplicationWindow: 5000, // 错误去重时间窗口(ms)
-                ...options
+                ...(options || {})
             };
+
+            // 验证选项
+            this._validateOptions();
             
             // 重试计数器
             this._retryCounts = new Map();
@@ -139,6 +147,38 @@
             
             // 错误上下文信息
             this._contextInfo = this._collectContext();
+
+            // 销毁标志
+            this._isDestroyed = false;
+
+            // 恢复策略执行状态
+            this._recoveryInProgress = new Set();
+        }
+
+        /**
+         * 验证选项参数
+         * @private
+         */
+        _validateOptions() {
+            if (typeof this.options.maxRetries !== 'number' || this.options.maxRetries < 0) {
+                console.warn('ErrorHandler: Invalid maxRetries, using default 3');
+                this.options.maxRetries = 3;
+            }
+
+            if (typeof this.options.deduplicationWindow !== 'number' || this.options.deduplicationWindow < 0) {
+                console.warn('ErrorHandler: Invalid deduplicationWindow, using default 5000');
+                this.options.deduplicationWindow = 5000;
+            }
+        }
+
+        /**
+         * 检查实例是否已被销毁
+         * @private
+         */
+        _checkDestroyed() {
+            if (this._isDestroyed) {
+                throw new Error('ErrorHandler: Instance has been destroyed');
+            }
         }
 
         /**
@@ -185,28 +225,45 @@
 
         /**
          * 收集错误上下文信息
+         * @returns {Object} 上下文信息
          */
         _collectContext() {
-            return {
-                url: window.location.href,
-                userAgent: navigator.userAgent,
-                viewport: `${window.innerWidth}x${window.innerHeight}`,
-                screenResolution: `${window.screen.width}x${window.screen.height}`,
-                online: navigator.onLine,
-                language: navigator.language,
-                platform: navigator.platform,
-                cores: navigator.hardwareConcurrency || 'unknown',
-                memory: performance?.memory ? {
-                    usedJSHeapSize: Math.round(performance.memory.usedJSHeapSize / 1048576) + 'MB',
-                    totalJSHeapSize: Math.round(performance.memory.totalJSHeapSize / 1048576) + 'MB'
-                } : null,
-                connection: navigator.connection ? {
-                    effectiveType: navigator.connection.effectiveType,
-                    downlink: navigator.connection.downlink,
-                    rtt: navigator.connection.rtt
-                } : null,
-                timestamp: new Date().toISOString()
-            };
+            try {
+                // 检查浏览器环境
+                if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+                    return {
+                        environment: 'non-browser',
+                        timestamp: new Date().toISOString()
+                    };
+                }
+
+                return {
+                    url: window.location?.href || 'unknown',
+                    userAgent: navigator.userAgent || 'unknown',
+                    viewport: `${window.innerWidth || 0}x${window.innerHeight || 0}`,
+                    screenResolution: window.screen ? `${window.screen.width}x${window.screen.height}` : 'unknown',
+                    online: navigator.onLine,
+                    language: navigator.language || 'unknown',
+                    platform: navigator.platform || 'unknown',
+                    cores: navigator.hardwareConcurrency || 'unknown',
+                    memory: (typeof performance !== 'undefined' && performance.memory) ? {
+                        usedJSHeapSize: Math.round(performance.memory.usedJSHeapSize / 1048576) + 'MB',
+                        totalJSHeapSize: Math.round(performance.memory.totalJSHeapSize / 1048576) + 'MB'
+                    } : null,
+                    connection: (navigator.connection) ? {
+                        effectiveType: navigator.connection.effectiveType,
+                        downlink: navigator.connection.downlink,
+                        rtt: navigator.connection.rtt
+                    } : null,
+                    timestamp: new Date().toISOString()
+                };
+            } catch (error) {
+                console.error('ErrorHandler: Error collecting context:', error);
+                return {
+                    error: 'Failed to collect context',
+                    timestamp: new Date().toISOString()
+                };
+            }
         }
 
         /**
@@ -270,35 +327,67 @@
 
         /**
          * 处理错误
+         * @param {Error|string|Object} error - 错误对象
+         * @param {Object} context - 错误上下文
+         * @returns {Object} 标准化后的错误对象
          */
         handle(error, context = {}) {
-            const normalizedError = this._normalizeError(error, context);
-            
-            // 检查是否是重复错误
-            if (this._isDuplicateError(normalizedError)) {
+            this._checkDestroyed();
+
+            try {
+                // 验证参数
+                if (!error) {
+                    console.warn('ErrorHandler: Received empty error');
+                    return null;
+                }
+
+                const normalizedError = this._normalizeError(error, context);
+                
+                // 检查是否是重复错误
+                if (this._isDuplicateError(normalizedError)) {
+                    return normalizedError;
+                }
+                
+                // 更新上下文信息（每次处理错误时刷新）
+                this._contextInfo = this._collectContext();
+                
+                // 记录错误
+                this._logError(normalizedError);
+                
+                // 触发监听
+                this._emit(normalizedError.type, normalizedError);
+                
+                // 显示错误提示
+                if (this.options.showToast) {
+                    try {
+                        this.showErrorToast(normalizedError);
+                    } catch (toastError) {
+                        console.error('ErrorHandler: Error showing toast:', toastError);
+                    }
+                }
+                
+                // 尝试自动恢复
+                if (this.options.autoRecovery && normalizedError.recoverable) {
+                    try {
+                        this._attemptRecovery(normalizedError);
+                    } catch (recoveryError) {
+                        console.error('ErrorHandler: Error attempting recovery:', recoveryError);
+                    }
+                }
+                
                 return normalizedError;
+            } catch (handleError) {
+                console.error('ErrorHandler: Error handling error:', handleError);
+                // 返回一个基本的错误对象
+                return {
+                    type: ErrorType.UNKNOWN_ERROR,
+                    message: typeof error === 'string' ? error : 'Error handling failed',
+                    originalError: error,
+                    context: context,
+                    timestamp: Date.now(),
+                    recoverable: false
+                };
             }
-            
-            // 更新上下文信息（每次处理错误时刷新）
-            this._contextInfo = this._collectContext();
-            
-            // 记录错误
-            this._logError(normalizedError);
-            
-            // 触发监听
-            this._emit(normalizedError.type, normalizedError);
-            
-            // 显示错误提示
-            if (this.options.showToast) {
-                this.showErrorToast(normalizedError);
-            }
-            
-            // 尝试自动恢复
-            if (this.options.autoRecovery) {
-                this._attemptRecovery(normalizedError);
-            }
-            
-            return normalizedError;
         }
 
         /**
@@ -351,34 +440,56 @@
 
         /**
          * 尝试自动恢复
+         * @param {Object} error - 标准化错误对象
+         * @returns {boolean} 是否成功启动恢复
          */
         _attemptRecovery(error) {
-            const strategy = RecoveryStrategies[error.type];
-            if (!strategy || !strategy.retryable) {
+            try {
+                // 检查是否已在恢复中
+                if (this._recoveryInProgress.has(error.type)) {
+                    console.log(`ErrorHandler: Recovery already in progress for ${error.type}`);
+                    return false;
+                }
+
+                const strategy = RecoveryStrategies[error.type];
+                if (!strategy || !strategy.retryable) {
+                    return false;
+                }
+
+                const retryCount = this._retryCounts.get(error.type) || 0;
+                
+                if (retryCount >= (strategy.maxRetries || this.options.maxRetries)) {
+                    console.log(`ErrorHandler: Max retries reached for ${error.type}`);
+                    this._retryCounts.delete(error.type);
+                    this._recoveryInProgress.delete(error.type);
+                    return false;
+                }
+
+                this._retryCounts.set(error.type, retryCount + 1);
+                this._recoveryInProgress.add(error.type);
+                
+                console.log(`ErrorHandler: Attempting recovery for ${error.type}, retry ${retryCount + 1}`);
+                
+                setTimeout(() => {
+                    try {
+                        this._emit('recovery', {
+                            error: error,
+                            retryCount: retryCount + 1,
+                            strategy: strategy
+                        });
+                    } catch (emitError) {
+                        console.error('ErrorHandler: Error emitting recovery event:', emitError);
+                    } finally {
+                        this._recoveryInProgress.delete(error.type);
+                    }
+                }, strategy.retryDelay || 2000);
+                
+                return true;
+            } catch (recoveryError) {
+                console.error('ErrorHandler: Error in _attemptRecovery:', recoveryError);
+                this._recoveryInProgress.delete(error.type);
                 return false;
             }
-
-            const retryCount = this._retryCounts.get(error.type) || 0;
-            
-            if (retryCount >= (strategy.maxRetries || this.options.maxRetries)) {
-                console.log(`ErrorHandler: Max retries reached for ${error.type}`);
-                this._retryCounts.delete(error.type);
-                return false;
-            }
-
-            this._retryCounts.set(error.type, retryCount + 1);
-            
-            console.log(`ErrorHandler: Attempting recovery for ${error.type}, retry ${retryCount + 1}`);
-            
-            setTimeout(() => {
-                this._emit('recovery', {
-                    error: error,
-                    retryCount: retryCount + 1,
-                    strategy: strategy
-                });
-            }, strategy.retryDelay || 2000);
-            
-            return true;
         }
 
         /**
@@ -606,11 +717,22 @@
          * 销毁错误处理器
          */
         destroy() {
-            this._listeners.clear();
-            this._retryCounts.clear();
-            this._errorHistory = [];
-            this._errorCache.clear();
-            this._contextInfo = null;
+            if (this._isDestroyed) {
+                return;
+            }
+
+            this._isDestroyed = true;
+
+            try {
+                this._listeners.clear();
+                this._retryCounts.clear();
+                this._errorHistory = [];
+                this._errorCache.clear();
+                this._recoveryInProgress.clear();
+                this._contextInfo = null;
+            } catch (error) {
+                console.error('ErrorHandler: Error during destroy:', error);
+            }
         }
     }
 

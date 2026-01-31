@@ -29,8 +29,16 @@
      */
     class AudioRecorder {
         constructor(options = {}) {
-            this.config = { ...DEFAULT_CONFIG, ...options };
+            // 参数验证
+            if (options !== null && typeof options !== 'object') {
+                throw new TypeError('AudioRecorder: options must be an object');
+            }
+
+            this.config = { ...DEFAULT_CONFIG, ...(options || {}) };
             
+            // 验证配置
+            this._validateConfig();
+
             // AudioContext 和相关节点
             this.audioContext = null;
             this.mediaStreamSource = null;
@@ -64,6 +72,49 @@
             
             // 防止重复初始化
             this._initializing = false;
+
+            // 销毁标志
+            this._isDestroyed = false;
+        }
+
+        /**
+         * 验证配置参数
+         * @private
+         */
+        _validateConfig() {
+            // 验证采样率
+            if (typeof this.config.sampleRate !== 'number' || this.config.sampleRate <= 0) {
+                console.warn('AudioRecorder: Invalid sampleRate, using default 16000');
+                this.config.sampleRate = 16000;
+            }
+
+            // 验证缓冲区大小
+            const validBufferSizes = [256, 512, 1024, 2048, 4096, 8192, 16384];
+            if (!validBufferSizes.includes(this.config.bufferSize)) {
+                console.warn(`AudioRecorder: Invalid bufferSize ${this.config.bufferSize}, using default 4096`);
+                this.config.bufferSize = 4096;
+            }
+
+            // 验证时长参数
+            if (typeof this.config.chunkDuration !== 'number' || this.config.chunkDuration <= 0) {
+                console.warn('AudioRecorder: Invalid chunkDuration, using default 100');
+                this.config.chunkDuration = 100;
+            }
+
+            if (typeof this.config.maxDuration !== 'number' || this.config.maxDuration <= 0) {
+                console.warn('AudioRecorder: Invalid maxDuration, using default 600000');
+                this.config.maxDuration = 600000;
+            }
+        }
+
+        /**
+         * 检查实例是否已被销毁
+         * @private
+         */
+        _checkDestroyed() {
+            if (this._isDestroyed) {
+                throw new Error('AudioRecorder: Instance has been destroyed');
+            }
         }
 
         /**
@@ -98,12 +149,13 @@
 
         /**
          * 检查浏览器支持
+         * @returns {Object} 支持情况
          */
         checkSupport() {
             const support = {
-                getUserMedia: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
-                audioContext: !!(window.AudioContext || window.webkitAudioContext),
-                webAudio: !!(window.AudioContext || window.webkitAudioContext)
+                getUserMedia: !!(typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+                audioContext: !!(typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)),
+                webAudio: !!(typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext))
             };
             
             return {
@@ -114,8 +166,11 @@
 
         /**
          * 初始化录音器
+         * @returns {Promise} 初始化结果
          */
         async init() {
+            this._checkDestroyed();
+
             // 防止重复初始化
             if (this._initializing) {
                 return new Promise((resolve, reject) => {
@@ -139,10 +194,17 @@
                 return;
             }
 
+            // 检查浏览器环境
+            if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+                throw new Error('AudioRecorder: Must run in a browser environment');
+            }
+
             // 检查支持情况
             const support = this.checkSupport();
             if (!support.supported) {
-                console.warn('AudioRecorder: Browser may not fully support recording:', support.details);
+                const error = new Error('浏览器不支持音频录制功能');
+                error.details = support.details;
+                throw error;
             }
 
             this._initializing = true;
@@ -161,6 +223,11 @@
                             autoGainControl: false
                         } 
                     }).then(stream => {
+                        // 验证媒体流
+                        if (!stream || !stream.getAudioTracks || stream.getAudioTracks().length === 0) {
+                            throw new Error('无法获取音频轨道');
+                        }
+
                         this.mediaStream = stream;
                         
                         // 创建 AudioContext
@@ -186,7 +253,11 @@
                         // 处理音频数据
                         this.scriptProcessor.onaudioprocess = (e) => {
                             if (this.state === RecorderState.RECORDING) {
-                                this._processAudioData(e.inputBuffer);
+                                try {
+                                    this._processAudioData(e.inputBuffer);
+                                } catch (processError) {
+                                    console.error('AudioRecorder: Error in audio process:', processError);
+                                }
                             }
                         };
                         
@@ -202,6 +273,8 @@
                         
                         const error = new Error(err.message || '无法访问麦克风');
                         error.isUserNotAllow = err.name === 'NotAllowedError';
+                        error.isNotFound = err.name === 'NotFoundError';
+                        error.isNotReadable = err.name === 'NotReadableError';
                         
                         this._emit('error', error);
                         reject(error);
@@ -318,8 +391,11 @@
 
         /**
          * 开始录音
+         * @returns {Promise} 开始录音结果
          */
         async start() {
+            this._checkDestroyed();
+
             if (this.state === RecorderState.RECORDING) {
                 console.warn('AudioRecorder: Already recording');
                 return;
@@ -329,16 +405,21 @@
                 throw new Error('录音器处于错误状态，请重新初始化');
             }
 
-            if (!this.audioContext) {
-                await this.init();
-            }
-
-            // 确保处于空闲状态
-            if (this.state !== RecorderState.IDLE && this.state !== RecorderState.PAUSED) {
-                throw new Error(`无法开始录音，当前状态: ${this.state}`);
-            }
-
             try {
+                if (!this.audioContext) {
+                    await this.init();
+                }
+
+                // 验证初始化成功
+                if (!this.audioContext) {
+                    throw new Error('AudioContext not initialized');
+                }
+
+                // 确保处于空闲状态
+                if (this.state !== RecorderState.IDLE && this.state !== RecorderState.PAUSED) {
+                    throw new Error(`无法开始录音，当前状态: ${this.state}`);
+                }
+
                 // 重置缓冲和统计
                 this.sampleBuffer = [];
                 this.stats = {
@@ -589,9 +670,22 @@
          * 销毁录音器
          */
         destroy() {
-            this.close().then(() => {
+            if (this._isDestroyed) {
+                return Promise.resolve();
+            }
+
+            this._isDestroyed = true;
+
+            return this.close().then(() => {
                 this._listeners.clear();
                 this._onProcessCallback = null;
+                this.sampleBuffer = [];
+            }).catch(error => {
+                console.error('AudioRecorder: Error during destroy:', error);
+                // 即使出错也要清理
+                this._listeners.clear();
+                this._onProcessCallback = null;
+                this.sampleBuffer = [];
             });
         }
     }

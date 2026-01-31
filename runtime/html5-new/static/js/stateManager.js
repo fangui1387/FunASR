@@ -33,6 +33,11 @@
      */
     class StateManager {
         constructor(options = {}) {
+            // 参数验证
+            if (options !== null && typeof options !== 'object') {
+                throw new TypeError('StateManager: options must be an object');
+            }
+
             // 当前状态
             this._connectionState = ConnectionState.DISCONNECTED;
             this._recordingState = RecordingState.IDLE;
@@ -51,13 +56,45 @@
                 delay: options.debounceDelay || 50,  // 默认50ms
                 maxWait: options.debounceMaxWait || 200 // 最大等待时间
             };
+
+            // 验证防抖配置
+            this._validateDebounceConfig();
             
             // 防抖定时器
             this._debounceTimers = new Map();
             this._debouncePending = new Map();
+
+            // 销毁标志
+            this._isDestroyed = false;
             
             // 初始化
             this._init();
+        }
+
+        /**
+         * 验证防抖配置
+         * @private
+         */
+        _validateDebounceConfig() {
+            if (typeof this._debounceConfig.delay !== 'number' || this._debounceConfig.delay < 0) {
+                console.warn('StateManager: Invalid debounceDelay, using default 50');
+                this._debounceConfig.delay = 50;
+            }
+
+            if (typeof this._debounceConfig.maxWait !== 'number' || this._debounceConfig.maxWait < 0) {
+                console.warn('StateManager: Invalid debounceMaxWait, using default 200');
+                this._debounceConfig.maxWait = 200;
+            }
+        }
+
+        /**
+         * 检查实例是否已被销毁
+         * @private
+         */
+        _checkDestroyed() {
+            if (this._isDestroyed) {
+                throw new Error('StateManager: Instance has been destroyed');
+            }
         }
 
         /**
@@ -242,33 +279,42 @@
 
         /**
          * 设置连接状态
+         * @param {string} state - 连接状态
+         * @returns {boolean} 设置是否成功
          */
         setConnectionState(state) {
-            if (!Object.values(ConnectionState).includes(state)) {
-                console.error(`StateManager: Invalid connection state: ${state}`);
+            this._checkDestroyed();
+
+            try {
+                if (!Object.values(ConnectionState).includes(state)) {
+                    console.error(`StateManager: Invalid connection state: ${state}`);
+                    return false;
+                }
+                
+                if (this._connectionState === state) {
+                    return false;
+                }
+                
+                const prevState = this._connectionState;
+                this._connectionState = state;
+                
+                this._logStateChange('connectionChange', {
+                    from: prevState,
+                    to: state
+                });
+                
+                this._emit('connectionChange', { state, prevState });
+                this._emit('stateChange', {
+                    type: 'connection',
+                    state,
+                    prevState
+                });
+                
+                return true;
+            } catch (error) {
+                console.error('StateManager: Error setting connection state:', error);
                 return false;
             }
-            
-            if (this._connectionState === state) {
-                return false;
-            }
-            
-            const prevState = this._connectionState;
-            this._connectionState = state;
-            
-            this._logStateChange('connectionChange', {
-                from: prevState,
-                to: state
-            });
-            
-            this._emit('connectionChange', { state, prevState });
-            this._emit('stateChange', {
-                type: 'connection',
-                state,
-                prevState
-            });
-            
-            return true;
         }
 
         /**
@@ -296,33 +342,42 @@
 
         /**
          * 设置录音状态
+         * @param {string} state - 录音状态
+         * @returns {boolean} 设置是否成功
          */
         setRecordingState(state) {
-            if (!Object.values(RecordingState).includes(state)) {
-                console.error(`StateManager: Invalid recording state: ${state}`);
+            this._checkDestroyed();
+
+            try {
+                if (!Object.values(RecordingState).includes(state)) {
+                    console.error(`StateManager: Invalid recording state: ${state}`);
+                    return false;
+                }
+                
+                if (this._recordingState === state) {
+                    return false;
+                }
+                
+                const prevState = this._recordingState;
+                this._recordingState = state;
+                
+                this._logStateChange('recordingChange', {
+                    from: prevState,
+                    to: state
+                });
+                
+                this._emit('recordingChange', { state, prevState });
+                this._emit('stateChange', {
+                    type: 'recording',
+                    state,
+                    prevState
+                });
+                
+                return true;
+            } catch (error) {
+                console.error('StateManager: Error setting recording state:', error);
                 return false;
             }
-            
-            if (this._recordingState === state) {
-                return false;
-            }
-            
-            const prevState = this._recordingState;
-            this._recordingState = state;
-            
-            this._logStateChange('recordingChange', {
-                from: prevState,
-                to: state
-            });
-            
-            this._emit('recordingChange', { state, prevState });
-            this._emit('stateChange', {
-                type: 'recording',
-                state,
-                prevState
-            });
-            
-            return true;
         }
 
         /**
@@ -351,33 +406,42 @@
 
         /**
          * 设置应用状态
+         * @param {string} state - 应用状态
+         * @returns {boolean} 设置是否成功
          */
         setAppState(state) {
-            if (!Object.values(AppState).includes(state)) {
-                console.error(`StateManager: Invalid app state: ${state}`);
+            this._checkDestroyed();
+
+            try {
+                if (!Object.values(AppState).includes(state)) {
+                    console.error(`StateManager: Invalid app state: ${state}`);
+                    return false;
+                }
+                
+                if (this._appState === state) {
+                    return false;
+                }
+                
+                const prevState = this._appState;
+                this._appState = state;
+                
+                this._logStateChange('appStateChange', {
+                    from: prevState,
+                    to: state
+                });
+                
+                this._emit('appStateChange', { state, prevState });
+                this._emit('stateChange', {
+                    type: 'app',
+                    state,
+                    prevState
+                });
+                
+                return true;
+            } catch (error) {
+                console.error('StateManager: Error setting app state:', error);
                 return false;
             }
-            
-            if (this._appState === state) {
-                return false;
-            }
-            
-            const prevState = this._appState;
-            this._appState = state;
-            
-            this._logStateChange('appStateChange', {
-                from: prevState,
-                to: state
-            });
-            
-            this._emit('appStateChange', { state, prevState });
-            this._emit('stateChange', {
-                type: 'app',
-                state,
-                prevState
-            });
-            
-            return true;
         }
 
         /**
@@ -453,13 +517,29 @@
          * 销毁状态管理器
          */
         destroy() {
-            // 清除所有防抖定时器
-            this._debounceTimers.forEach(timer => clearTimeout(timer));
-            this._debounceTimers.clear();
-            this._debouncePending.clear();
-            
-            this._listeners.clear();
-            this._stateHistory = [];
+            if (this._isDestroyed) {
+                return;
+            }
+
+            this._isDestroyed = true;
+
+            try {
+                // 清除所有防抖定时器
+                this._debounceTimers.forEach(timer => {
+                    try {
+                        clearTimeout(timer);
+                    } catch (e) {
+                        // 忽略清除错误
+                    }
+                });
+                this._debounceTimers.clear();
+                this._debouncePending.clear();
+                
+                this._listeners.clear();
+                this._stateHistory = [];
+            } catch (error) {
+                console.error('StateManager: Error during destroy:', error);
+            }
         }
 
         /**
