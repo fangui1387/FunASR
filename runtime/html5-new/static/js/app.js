@@ -44,14 +44,23 @@
             // 验证必要配置
             this._validateConfig();
 
+            // 初始化核心辅助模块
+            // StateManager: 统一管理录音、连接和应用状态
+            this.stateManager = new StateManager();
+            // ErrorHandler: 统一处理错误和环境检查
+            this.errorHandler = new ErrorHandler({
+                showToast: false, // UI显示由外部控制
+                logErrors: true
+            });
+
+            // 绑定错误处理器的事件监听，将标准化后的错误抛出给上层
+            this.errorHandler.on('*', (error) => {
+                this._emit('error', error);
+            });
+
             // 核心模块
             this.wsClient = null;
             this.audioRecorder = null;
-            
-            // 状态
-            this._isRecording = false;
-            this._isInitialized = false;
-            this._isDestroyed = false;
             
             // 识别结果存储
             this.results = [];
@@ -105,7 +114,7 @@
          * @private
          */
         _checkDestroyed() {
-            if (this._isDestroyed) {
+            if (!this.stateManager) {
                 throw new Error('FunASRController: Instance has been destroyed');
             }
         }
@@ -115,8 +124,25 @@
          */
         async _init() {
             try {
-                // 检查浏览器环境支持
-                this._checkEnvironmentSupport();
+                this.stateManager.setAppState(AppState.INITIALIZING);
+
+                // 检查浏览器环境支持 (使用 ErrorHandler 的能力)
+                const support = this.errorHandler.checkBrowserSupport();
+                
+                // 输出警告信息
+                if (support.warnings && support.warnings.length > 0) {
+                    support.warnings.forEach(warning => {
+                        console.warn('FunASRController Warning:', warning.message);
+                    });
+                }
+
+                // 如果有严重错误且处于严格模式（或者缺少核心功能WebSocket）
+                if (support.errors && support.errors.length > 0) {
+                    const criticalError = support.errors.find(e => e.type === ErrorType.BROWSER_NOT_SUPPORTED);
+                    if (criticalError) {
+                        throw new Error(criticalError.message);
+                    }
+                }
 
                 // 初始化WebSocket客户端
                 this.wsClient = new WSClient({
@@ -138,31 +164,14 @@
                 // 绑定音频录制器事件
                 this._bindAudioRecorderEvents();
                 
-                this._isInitialized = true;
+                this.stateManager.setAppState(AppState.READY);
                 console.log('FunASRController: Initialized successfully');
             } catch (error) {
+                this.stateManager.setAppState(AppState.ERROR);
                 console.error('FunASRController: Initialization failed:', error);
-                this._emit('error', error);
+                this.errorHandler.handle(error, { phase: 'initialization' });
                 // 初始化失败时清理资源
                 this._cleanupOnInitFailure();
-            }
-        }
-
-        /**
-         * 检查浏览器环境支持
-         * @private
-         */
-        _checkEnvironmentSupport() {
-            if (typeof window === 'undefined') {
-                throw new Error('FunASRController: Must run in a browser environment');
-            }
-
-            if (!window.WebSocket) {
-                throw new Error('FunASRController: WebSocket is not supported in this browser');
-            }
-
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                throw new Error('FunASRController: getUserMedia is not supported in this browser');
             }
         }
 
@@ -174,17 +183,13 @@
             if (this.wsClient) {
                 try {
                     this.wsClient.destroy();
-                } catch (e) {
-                    // 忽略清理错误
-                }
+                } catch (e) { /* ignore */ }
                 this.wsClient = null;
             }
             if (this.audioRecorder) {
                 try {
                     this.audioRecorder.destroy();
-                } catch (e) {
-                    // 忽略清理错误
-                }
+                } catch (e) { /* ignore */ }
                 this.audioRecorder = null;
             }
         }
@@ -196,19 +201,24 @@
             if (!this.wsClient) return;
 
             this.wsClient.on('connecting', () => {
+                this.stateManager.setConnectionState(ConnectionState.CONNECTING);
                 this._emit('connecting');
             });
 
             this.wsClient.on('connected', () => {
+                this.stateManager.setConnectionState(ConnectionState.CONNECTED);
                 this._emit('connected');
             });
 
             this.wsClient.on('disconnected', () => {
+                this.stateManager.setConnectionState(ConnectionState.DISCONNECTED);
                 this._emit('disconnected');
             });
 
             this.wsClient.on('error', (error) => {
-                this._emit('error', error);
+                this.stateManager.setConnectionState(ConnectionState.ERROR);
+                // 委托给 ErrorHandler 处理，它会通过事件冒泡触发 this._emit('error')
+                this.errorHandler.handle(error, { source: 'WebSocket' });
             });
 
             this.wsClient.on('result', (result) => {
@@ -227,23 +237,25 @@
             if (!this.audioRecorder) return;
 
             this.audioRecorder.on('started', () => {
-                this._isRecording = true;
+                this.stateManager.setRecordingState(RecordingState.RECORDING);
                 this._emit('start');
             });
 
             this.audioRecorder.on('stopped', () => {
-                this._isRecording = false;
+                this.stateManager.setRecordingState(RecordingState.IDLE);
                 this._emit('stop');
             });
 
             this.audioRecorder.on('audioData', (data) => {
-                if (this.wsClient && this.wsClient.getState().connected) {
+                // 使用 stateManager 检查连接状态
+                if (this.wsClient && this.stateManager.isConnected) {
                     this.wsClient.sendAudio(data);
                 }
             });
 
             this.audioRecorder.on('error', (error) => {
-                this._emit('error', error);
+                // 委托给 ErrorHandler 处理
+                this.errorHandler.handle(error, { source: 'AudioRecorder' });
             });
         }
 
@@ -261,17 +273,7 @@
 
                 const newText = result.text || '';
                 const mode = result.mode || '';
-                // 2pass模式下，只有mode为'2pass-offline'时才表示句子结束
-                // 不依赖result.isFinal，因为服务器可能在2pass-online模式下也设置is_final
                 const isSentenceEnd = mode === '2pass-offline';
-
-                console.log('[FunASRController Debug] ========== _handleRecognitionResult ==========');
-                console.log('[FunASRController Debug] newText:', newText);
-                console.log('[FunASRController Debug] result.mode:', result.mode);
-                console.log('[FunASRController Debug] this.config.mode:', this.config.mode);
-                console.log('[FunASRController Debug] isSentenceEnd:', isSentenceEnd);
-                console.log('[FunASRController Debug] completedSentences:', this.completedSentences);
-                console.log('[FunASRController Debug] currentSentence:', this.currentSentence);
 
                 // 更新当前文本
                 this.currentText = newText;
@@ -279,45 +281,31 @@
                 // 2pass/online模式：处理多句识别
                 if (this.config.mode === '2pass' || this.config.mode === 'online') {
                     if (isSentenceEnd) {
-                        // 句子结束，保存到已完成列表
-                        // 服务器返回的是完整句子文本
                         this.completedSentences.push(newText);
-                        // 限制句子数组大小防止内存溢出
                         if (this.completedSentences.length > this._maxSentencesSize) {
                             this.completedSentences = this.completedSentences.slice(-this._maxSentencesSize);
                         }
                         this.currentSentence = '';
-                        console.log('[FunASRController Debug] 句子结束，已保存到completedSentences');
                     } else {
-                        // 中间结果，增量添加到当前句子
-                        // 服务器返回的是增量文本
                         this.currentSentence += newText;
-                        console.log('[FunASRController Debug] 中间结果，增量更新currentSentence:', this.currentSentence);
                     }
-
-                    // 拼接完整文本：已完成的句子 + 当前正在识别的句子
                     result.fullText = this.completedSentences.join('') + this.currentSentence;
-                    console.log('[FunASRController Debug] fullText:', result.fullText);
                 } else {
-                    // offline模式：直接显示
                     result.fullText = newText;
                 }
 
                 this._emit('result', result);
             } catch (error) {
                 console.error('FunASRController: Error handling recognition result:', error);
-                this._emit('error', new Error(`Failed to process recognition result: ${error.message}`));
+                this.errorHandler.handle(error, { phase: 'handleResult' });
             }
         }
 
         /**
          * 处理识别完成（句子结束）
-         * 在2pass模式下，只有mode为'2pass-offline'时才会触发
-         * @param {Object} result - 识别结果对象
          */
         _handleRecognitionComplete(result) {
             try {
-                // 参数验证
                 if (!result || typeof result !== 'object') {
                     console.warn('FunASRController: Invalid complete result received', result);
                     return;
@@ -325,27 +313,21 @@
 
                 const finalText = result.text || '';
 
-                // 保存结果，限制数组大小防止内存溢出
                 this.results.push(result);
                 if (this.results.length > this._maxResultsSize) {
                     this.results = this.results.slice(-this._maxResultsSize);
                 }
                 
-                // 2pass/online模式：使用服务器返回的最终结果
                 if (this.config.mode === '2pass' || this.config.mode === 'online') {
                     if (finalText) {
                         result.fullText = finalText;
                     }
-                    
-                    // 注意：不在此处重置多句识别状态
-                    // 因为2pass模式下，complete只表示一个句子结束，不是整个录音结束
-                    // 状态重置应该在开始新的录音时进行（startRecording中）
                 }
                 
                 this._emit('complete', result);
             } catch (error) {
                 console.error('FunASRController: Error handling recognition complete:', error);
-                this._emit('error', new Error(`Failed to process recognition complete: ${error.message}`));
+                this.errorHandler.handle(error, { phase: 'handleComplete' });
             }
         }
 
@@ -382,57 +364,41 @@
 
         // ========== 便捷的事件绑定方法 ==========
 
-        onResult(callback) {
-            return this.on('result', callback);
-        }
-
-        onComplete(callback) {
-            return this.on('complete', callback);
-        }
-
-        onError(callback) {
-            return this.on('error', callback);
-        }
-
-        onStart(callback) {
-            return this.on('start', callback);
-        }
-
-        onStop(callback) {
-            return this.on('stop', callback);
-        }
-
-        onConnecting(callback) {
-            return this.on('connecting', callback);
-        }
-
-        onConnected(callback) {
-            return this.on('connected', callback);
-        }
-
-        onDisconnected(callback) {
-            return this.on('disconnected', callback);
-        }
+        onResult(callback) { return this.on('result', callback); }
+        onComplete(callback) { return this.on('complete', callback); }
+        onError(callback) { return this.on('error', callback); }
+        onStart(callback) { return this.on('start', callback); }
+        onStop(callback) { return this.on('stop', callback); }
+        onConnecting(callback) { return this.on('connecting', callback); }
+        onConnected(callback) { return this.on('connected', callback); }
+        onDisconnected(callback) { return this.on('disconnected', callback); }
 
         // ========== 核心API方法 ==========
 
         /**
          * 连接到服务器
-         * @param {Object} params - 连接参数
-         * @returns {Promise} 连接结果
          */
         async connect(params = {}) {
             this._checkDestroyed();
 
-            if (!this._isInitialized) {
-                throw new Error('SDK未初始化完成');
+            if (!this.stateManager.isReady) {
+                 // 等待初始化（如果还在进行中）
+                 if (this._initPromise) {
+                     await this._initPromise;
+                 }
+                 if (!this.stateManager.isReady) {
+                    throw new Error('SDK未就绪或初始化失败');
+                 }
             }
+
+            // 使用 stateManager 检查是否允许连接
+            // 注意：这里我们允许在任何非CONNECTED状态下尝试连接，所以不严格检查 canPerform('connect')
+            // 因为 wsClient 内部会处理状态
 
             if (!this.wsClient) {
                 throw new Error('WebSocket client not initialized');
             }
 
-            // 参数验证
             const connectionParams = {
                 mode: params.mode || this.config.mode,
                 wavName: params.wavName || this.config.wavName,
@@ -445,8 +411,7 @@
             try {
                 return await this.wsClient.connect(connectionParams);
             } catch (error) {
-                console.error('FunASRController: Connection failed:', error);
-                this._emit('error', error);
+                // error is already handled by wsClient 'error' event -> errorHandler
                 throw error;
             }
         }
@@ -462,43 +427,36 @@
 
         /**
          * 开始录音
-         * @param {Object} params - 录音参数
-         * @returns {Promise} 开始录音结果
          */
         async startRecording(params = {}) {
             this._checkDestroyed();
 
             try {
-                // 等待初始化完成
                 if (this._initPromise) {
                     await this._initPromise;
                 }
                 
-                if (!this._isInitialized) {
-                    throw new Error('SDK未初始化完成');
+                if (!this.stateManager.isReady && !this.stateManager.isConnected) {
+                     // 允许在未连接状态下调用，下面会尝试连接
+                } else if (this.stateManager.appState === AppState.ERROR) {
+                    throw new Error('SDK处于错误状态，无法开始录音');
                 }
 
-                if (this._isRecording) {
+                // 使用 stateManager 检查是否已经在录音
+                if (this.stateManager.isRecording) {
                     throw new Error('录音已在进行中');
                 }
 
-                // 验证WebSocket客户端
-                if (!this.wsClient) {
-                    throw new Error('WebSocket client not initialized');
-                }
-
-                // 验证音频录制器
-                if (!this.audioRecorder) {
-                    throw new Error('Audio recorder not initialized');
+                if (!this.wsClient || !this.audioRecorder) {
+                    throw new Error('核心模块未初始化');
                 }
 
                 // 如果未连接，先连接
-                if (!this.wsClient.getState().connected) {
+                if (!this.stateManager.isConnected) {
                     await this.connect(params);
                 }
 
-                // 发送配置参数到服务器
-                // 这是为了确保服务器收到 mode 参数后再开始处理音频数据
+                // 发送配置参数
                 const configMessage = {
                     mode: this.config.mode,
                     wav_name: this.config.wavName,
@@ -509,16 +467,7 @@
                     hotwords: this.config.hotwords
                 };
 
-                // 验证消息可以序列化
-                try {
-                    JSON.stringify(configMessage);
-                } catch (e) {
-                    throw new Error('Failed to serialize config message: ' + e.message);
-                }
-
                 const sent = this.wsClient._sendJson(configMessage);
-                console.log('[FunASRController Debug] Sent config:', JSON.stringify(configMessage), 'result:', sent);
-
                 if (!sent) {
                     throw new Error('Failed to send configuration to server');
                 }
@@ -531,20 +480,18 @@
                 // 开始录音
                 await this.audioRecorder.start();
             } catch (error) {
-                console.error('FunASRController: Failed to start recording:', error);
-                this._emit('error', error);
+                this.errorHandler.handle(error, { phase: 'startRecording' });
                 throw error;
             }
         }
 
         /**
          * 停止录音
-         * @returns {Promise} 停止录音结果
          */
         async stopRecording() {
             this._checkDestroyed();
 
-            if (!this._isRecording) {
+            if (!this.stateManager.isRecording) {
                 return;
             }
 
@@ -555,23 +502,19 @@
                 }
 
                 // 发送结束信号
-                if (this.wsClient && this.wsClient.getState().connected) {
+                if (this.wsClient && this.stateManager.isConnected) {
                     this.wsClient.sendEndSignal();
                 }
             } catch (error) {
-                console.error('FunASRController: Error stopping recording:', error);
-                this._emit('error', error);
-                // 即使出错也要确保状态重置
-                this._isRecording = false;
+                this.errorHandler.handle(error, { phase: 'stopRecording' });
+                // 强制重置状态以防万一
+                this.stateManager.setRecordingState(RecordingState.IDLE);
                 throw error;
             }
         }
 
         // ========== 配置管理 ==========
 
-        /**
-         * 设置识别模式
-         */
         setMode(mode) {
             this.config.mode = mode;
             if (this.wsClient) {
@@ -579,9 +522,6 @@
             }
         }
 
-        /**
-         * 设置WebSocket地址
-         */
         setUrl(url) {
             this.config.wsUrl = url;
             if (this.wsClient) {
@@ -589,9 +529,6 @@
             }
         }
 
-        /**
-         * 更新配置
-         */
         updateConfig(config) {
             this.config = { ...this.config, ...config };
             if (this.wsClient) {
@@ -601,37 +538,22 @@
 
         // ========== 状态获取 ==========
 
-        /**
-         * 是否正在录音
-         */
         isRecording() {
-            return this._isRecording;
+            return this.stateManager ? this.stateManager.isRecording : false;
         }
 
-        /**
-         * 是否已连接
-         */
         isConnected() {
-            return this.wsClient && this.wsClient.getState().connected;
+            return this.stateManager ? this.stateManager.isConnected : false;
         }
 
-        /**
-         * 获取所有识别结果
-         */
         getResults() {
             return [...this.results];
         }
 
-        /**
-         * 获取当前识别文本
-         */
         getCurrentText() {
             return this.currentText;
         }
 
-        /**
-         * 清空识别结果
-         */
         clearResults() {
             this.results = [];
             this.currentText = '';
@@ -644,42 +566,36 @@
 
         // ========== 销毁 ==========
 
-        /**
-         * 销毁SDK
-         */
         destroy() {
-            if (this._isDestroyed) {
+            if (!this.stateManager) {
                 return;
             }
 
-            this._isDestroyed = true;
-
             try {
-                // 停止录音（如果正在进行）
-                if (this._isRecording) {
-                    try {
-                        this.stopRecording();
-                    } catch (e) {
-                        console.warn('FunASRController: Error stopping recording during destroy:', e);
-                    }
+                // 停止录音
+                if (this.isRecording()) {
+                    this.stopRecording().catch(e => console.warn(e));
                 }
                 
                 if (this.audioRecorder) {
-                    try {
-                        this.audioRecorder.destroy();
-                    } catch (e) {
-                        console.warn('FunASRController: Error destroying audio recorder:', e);
-                    }
+                    this.audioRecorder.destroy();
                     this.audioRecorder = null;
                 }
 
                 if (this.wsClient) {
-                    try {
-                        this.wsClient.destroy();
-                    } catch (e) {
-                        console.warn('FunASRController: Error destroying WebSocket client:', e);
-                    }
+                    this.wsClient.destroy();
                     this.wsClient = null;
+                }
+
+                // 销毁管理器
+                if (this.errorHandler) {
+                    this.errorHandler.destroy();
+                    this.errorHandler = null;
+                }
+                
+                if (this.stateManager) {
+                    this.stateManager.destroy();
+                    this.stateManager = null;
                 }
 
                 // 清空监听器
@@ -687,7 +603,6 @@
                     this._listeners[key] = [];
                 });
 
-                this._isInitialized = false;
                 console.log('FunASRController: Destroyed');
             } catch (error) {
                 console.error('FunASRController: Error during destroy:', error);
