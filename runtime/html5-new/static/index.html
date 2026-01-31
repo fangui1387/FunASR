@@ -141,78 +141,144 @@
     <script src="js/audioRecorder.js"></script>
     <script src="js/app.js"></script>
 	<script>
-        // 初始化 vConsole（仅在开发环境启用）
+        /**
+         * ============================================================
+         * FunASR Web SDK 集成示例
+         * ============================================================
+         *
+         * 本文档演示如何在H5页面中集成FunASR语音识别功能
+         * 开发者可以参考此示例快速接入SDK
+         *
+         * 【接入步骤】
+         * 1. 引入必要的JS文件（见底部script标签）
+         * 2. 创建 FunASRController 实例
+         * 3. 绑定事件监听（onResult, onComplete, onError等）
+         * 4. 调用 startRecording() 开始录音
+         * 5. 调用 stopRecording() 停止录音
+         *
+         * 【核心API】
+         * - new FunASRController(options)  : 创建SDK实例
+         * - onResult(callback)             : 监听实时识别结果
+         * - onComplete(callback)           : 监听识别完成事件
+         * - onError(callback)              : 监听错误事件
+         * - startRecording()               : 开始录音
+         * - stopRecording()                : 停止录音
+         * - destroy()                      : 销毁SDK实例（页面卸载时调用）
+         *
+         * 【识别模式】
+         * - offline : 离线模式，录音结束后一次性识别，准确率最高
+         * - online  : 实时模式，边说边识别，实时性好
+         * - 2pass   : 两遍模式，实时+离线精修，兼顾实时性和准确率
+         *
+         * 详细文档请参考：SDK_INTEGRATION.md
+         * ============================================================
+         */
+
+        // ============================================================
+        // 第一步：开发环境调试配置（可选）
+        // ============================================================
+        // vConsole 是移动端调试工具，仅在开发环境启用
+        // 生产环境建议移除或禁用
         const isDevEnvironment = location.hostname === 'localhost' ||
                                  location.hostname === '127.0.0.1' ||
                                  location.search.includes('debug=true');
         let vConsole = null;
         if (isDevEnvironment) {
             vConsole = new VConsole();
+            console.log('[FunASR] 开发环境已启用vConsole调试');
         }
 
-        // ==========================================
-        // FunASR SDK 集成示例
-        // 其他H5页面可以参考此集成方式
-        // ==========================================
-
-        // DOM元素引用
+        // ============================================================
+        // 第二步：获取DOM元素引用
+        // ============================================================
+        // 将页面中需要用到的DOM元素统一管理，方便后续操作
         const elements = {
-            wsUrl: document.getElementById('wsUrl'),
-            recognitionMode: document.getElementById('recognitionMode'),
-            hotwords: document.getElementById('hotwords'),
-            useItn: document.getElementById('useItn'),
-            configContent: document.getElementById('configContent'),
-            toggleConfigBtn: document.getElementById('toggleConfigBtn'),
-            recordBtn: document.getElementById('recordBtn'),
-            recordStopBtn: document.getElementById('recordStopBtn'),
-            recordIdle: document.getElementById('recordIdle'),
-            recordActive: document.getElementById('recordActive'),
-            recordingTime: document.getElementById('recordingTime'),
-            statusIndicator: document.getElementById('statusIndicator'),
-            statusText: document.getElementById('statusText'),
-            resultContent: document.getElementById('resultContent'),
-            resultMeta: document.getElementById('resultMeta'),
-            loadingMask: document.getElementById('loadingMask'),
-            errorToast: document.getElementById('errorToast'),
-            errorMessage: document.getElementById('errorMessage'),
-            errorCloseBtn: document.getElementById('errorCloseBtn'),
-            clearResultBtn: document.getElementById('clearResultBtn'),
-            testConnectionBtn: document.getElementById('testConnectionBtn'),
-            resetConfigBtn: document.getElementById('resetConfigBtn')
+            // 配置相关元素
+            wsUrl: document.getElementById('wsUrl'),                    // WebSocket服务器地址输入框
+            recognitionMode: document.getElementById('recognitionMode'), // 识别模式下拉框
+            hotwords: document.getElementById('hotwords'),              // 热词配置文本域
+            useItn: document.getElementById('useItn'),                  // ITN开关
+            configContent: document.getElementById('configContent'),    // 配置面板内容区
+            toggleConfigBtn: document.getElementById('toggleConfigBtn'),// 配置面板切换按钮
+
+            // 录音控制元素
+            recordBtn: document.getElementById('recordBtn'),            // 开始录音按钮
+            recordStopBtn: document.getElementById('recordStopBtn'),    // 停止录音按钮
+            recordIdle: document.getElementById('recordIdle'),          // 录音前界面
+            recordActive: document.getElementById('recordActive'),      // 录音中界面
+            recordingTime: document.getElementById('recordingTime'),    // 录音时长显示
+
+            // 状态和结果元素
+            statusIndicator: document.getElementById('statusIndicator'),// 状态指示器
+            statusText: document.getElementById('statusText'),          // 状态文本
+            resultContent: document.getElementById('resultContent'),    // 识别结果内容区
+            resultMeta: document.getElementById('resultMeta'),          // 识别结果元信息
+            loadingMask: document.getElementById('loadingMask'),        // 加载遮罩
+
+            // 错误和工具元素
+            errorToast: document.getElementById('errorToast'),          // 错误提示框
+            errorMessage: document.getElementById('errorMessage'),      // 错误消息文本
+            errorCloseBtn: document.getElementById('errorCloseBtn'),    // 错误关闭按钮
+            clearResultBtn: document.getElementById('clearResultBtn'),  // 清空结果按钮
+            testConnectionBtn: document.getElementById('testConnectionBtn'), // 测试连接按钮
+            resetConfigBtn: document.getElementById('resetConfigBtn')   // 重置配置按钮
         };
 
-        // 创建 FunASRController 实例
+        // ============================================================
+        // 第三步：创建 FunASRController 实例（核心步骤）
+        // ============================================================
+        /**
+         * FunASRController 是SDK的核心类，负责管理语音识别全流程
+         *
+         * 配置参数说明：
+         * - wsUrl    : WebSocket服务器地址，格式为 ws://ip:port/ 或 wss://ip:port/
+         * - mode     : 识别模式，可选 'offline' | 'online' | '2pass'
+         * - itn      : 是否启用逆文本标准化（将数字转为阿拉伯数字）
+         * - hotwords : 热词配置，格式为 "热词 权重\n热词 权重"
+         * - audioFs  : 音频采样率，默认16000（16kHz）
+         */
         const asrController = new FunASRController({
-            wsUrl: elements.wsUrl.value,
-            mode: elements.recognitionMode.value,
-            itn: elements.useItn.checked
+            wsUrl: elements.wsUrl.value,           // 从输入框获取服务器地址
+            mode: elements.recognitionMode.value,  // 从下拉框获取识别模式
+            itn: elements.useItn.checked           // 从复选框获取ITN设置
         });
 
-        // 录音计时器
-        let recordingTimer = null;
-        let recordingSeconds = 0;
+        // 录音计时器相关变量
+        let recordingTimer = null;   // 计时器实例
+        let recordingSeconds = 0;    // 录音秒数
 
-        // ==========================================
-        // 事件绑定：识别结果
-        // ==========================================
+        // ============================================================
+        // 第四步：绑定SDK事件监听（核心步骤）
+        // ============================================================
+        // SDK通过事件机制将识别状态、结果等通知给开发者
+        // 开发者需要在对应的事件回调中更新UI
 
-        // 实时识别结果
+        /**
+         * onResult - 实时识别结果回调
+         * 在识别过程中会持续触发，用于显示中间识别结果
+         *
+         * result对象说明：
+         * - result.text      : 当前识别的文本片段
+         * - result.fullText  : 完整拼接文本（2pass/online模式下有效）
+         * - result.mode      : 当前识别模式
+         * - result.isFinal   : 是否为最终结果
+         */
         asrController.onResult((result) => {
             console.log('[ASR Result]', result);
 
-            // 获取当前模式
+            // 获取当前选择的识别模式
             const currentMode = elements.recognitionMode.value;
 
             // 根据模式显示结果
             if (currentMode === 'offline') {
-                // offline模式：直接显示
+                // offline模式：直接显示当前识别文本
                 setResultText(result.text || '', false);
             } else {
-                // 2pass/online模式：显示拼接后的完整文本
+                // 2pass/online模式：显示拼接后的完整文本（蓝色表示实时）
                 setResultText(result.fullText || '', true);
             }
 
-            // 更新元信息
+            // 更新元信息提示
             elements.resultMeta.style.display = 'block';
             if (currentMode === '2pass') {
                 elements.resultMeta.textContent = '2pass: 实时识别中...';
@@ -223,18 +289,24 @@
             }
         });
 
-        // 识别完成
+        /**
+         * onComplete - 识别完成回调
+         * 当一个句子或整段录音识别完成时触发
+         *
+         * 注意：在2pass/online模式下，complete事件可能只是一句话的识别完成
+         * 不是整个录音结束，所以不会自动停止录音UI
+         */
         asrController.onComplete((result) => {
             console.log('[ASR Complete]', result);
 
             const currentMode = elements.recognitionMode.value;
 
-            // 显示最终结果
+            // 显示最终结果（黑色表示最终结果）
             if (result.fullText || result.text) {
                 setResultText(result.fullText || result.text || '', false);
             }
 
-            // 更新元信息
+            // 更新元信息提示
             elements.resultMeta.style.display = 'block';
             if (currentMode === 'offline') {
                 elements.resultMeta.textContent = '✓ 离线识别完成';
@@ -244,66 +316,114 @@
                 elements.resultMeta.textContent = '✓ 实时识别完成';
             }
 
-            // 停止录音UI（仅在非2pass模式下立即重置，2pass模式等待用户手动停止或录音超时）
-            // 2pass模式下，complete事件可能只是一句话的识别完成，不是整个录音结束
+            // 仅在offline模式下自动停止录音UI
+            // 2pass/online模式下等待用户手动停止或录音超时
             if (currentMode !== '2pass' && currentMode !== 'online') {
                 stopRecordingUI();
             }
         });
 
-        // 错误处理
+        /**
+         * onError - 错误处理回调
+         * 当发生错误时触发，如网络错误、权限拒绝等
+         */
         asrController.onError((error) => {
             console.error('[ASR Error]', error);
             showError(error.message || '发生错误');
             stopRecordingUI();
         });
 
-        // 连接状态
+        // ============================================================
+        // 连接状态事件
+        // ============================================================
+
+        /**
+         * onConnecting - 正在连接服务器
+         * 显示加载状态，提示用户正在连接
+         */
         asrController.onConnecting(() => {
             updateStatus('connecting', '连接中...');
             showLoading();
         });
 
+        /**
+         * onConnected - 连接成功
+         * 更新状态为已连接，隐藏加载遮罩
+         */
         asrController.onConnected(() => {
             updateStatus('connected', '已连接');
             hideLoading();
         });
 
+        /**
+         * onDisconnected - 连接断开
+         * 更新状态为未连接
+         */
         asrController.onDisconnected(() => {
             updateStatus('', '未连接');
         });
 
-        // 录音状态
+        // ============================================================
+        // 录音状态事件
+        // ============================================================
+
+        /**
+         * onStart - 录音开始
+         * 更新UI为录音中状态
+         */
         asrController.onStart(() => {
             updateStatus('recording', '正在录音...');
             startRecordingUI();
         });
 
+        /**
+         * onStop - 录音停止
+         * 更新UI为就绪状态
+         */
         asrController.onStop(() => {
             updateStatus('', '准备就绪');
             stopRecordingUI();
         });
 
-        // ==========================================
-        // UI辅助函数
-        // ==========================================
+        // ============================================================
+        // 第五步：UI辅助函数
+        // ============================================================
+        // 这些函数用于更新页面UI，开发者可以根据实际需求修改
 
+        /**
+         * 更新状态栏显示
+         * @param {string} type - 状态类型：'connecting'|'connected'|'recording'|''
+         * @param {string} message - 状态文本消息
+         */
         function updateStatus(type, message) {
             elements.statusText.textContent = message;
             elements.statusIndicator.className = 'status-indicator ' + type;
         }
 
+        /**
+         * 切换到录音中UI状态
+         * - 隐藏录音前界面
+         * - 显示录音中界面
+         * - 启动录音计时器
+         */
         function startRecordingUI() {
             elements.recordIdle.style.display = 'none';
             elements.recordActive.style.display = 'flex';
             recordingSeconds = 0;
             updateRecordingTime();
+            // 每秒更新一次录音时长
             recordingTimer = setInterval(() => {
                 recordingSeconds++;
                 updateRecordingTime();
             }, 1000);
         }
 
+        /**
+         * 切换到录音结束UI状态
+         * - 显示录音前界面
+         * - 隐藏录音中界面
+         * - 清除录音计时器
+         */
         function stopRecordingUI() {
             elements.recordIdle.style.display = 'flex';
             elements.recordActive.style.display = 'none';
@@ -313,20 +433,37 @@
             }
         }
 
+        /**
+         * 更新录音时长显示
+         * 格式：MM:SS
+         */
         function updateRecordingTime() {
             const mins = Math.floor(recordingSeconds / 60).toString().padStart(2, '0');
             const secs = (recordingSeconds % 60).toString().padStart(2, '0');
             elements.recordingTime.textContent = `${mins}:${secs}`;
         }
 
+        /**
+         * 显示加载遮罩
+         * 在连接服务器时显示
+         */
         function showLoading() {
             elements.loadingMask.style.display = 'flex';
         }
 
+        /**
+         * 隐藏加载遮罩
+         * 连接成功后隐藏
+         */
         function hideLoading() {
             elements.loadingMask.style.display = 'none';
         }
 
+        /**
+         * 显示错误提示
+         * @param {string} message - 错误消息
+         * 5秒后自动隐藏
+         */
         function showError(message) {
             elements.errorMessage.textContent = message;
             elements.errorToast.style.display = 'block';
@@ -335,6 +472,12 @@
             }, 5000);
         }
 
+        /**
+         * HTML转义函数
+         * 防止XSS攻击，将特殊字符转为HTML实体
+         * @param {string} text - 原始文本
+         * @returns {string} 转义后的HTML
+         */
         function escapeHtml(text) {
             if (typeof text !== 'string') {
                 return '';
@@ -344,6 +487,12 @@
             return div.innerHTML;
         }
 
+        /**
+         * 文本清理函数
+         * 移除潜在的危险字符
+         * @param {string} text - 原始文本
+         * @returns {string} 清理后的文本
+         */
         function sanitizeText(text) {
             if (typeof text !== 'string') {
                 return '';
@@ -352,12 +501,23 @@
             return text.replace(/[<>]/g, '');
         }
 
+        /**
+         * 设置识别结果文本
+         * @param {string} text - 识别结果文本
+         * @param {boolean} isRealtime - 是否为实时结果（影响颜色显示）
+         *
+         * 实现说明：
+         * - 使用textContent而非innerHTML，防止XSS攻击
+         * - 实时结果显示为蓝色，最终结果显示为黑色
+         */
         function setResultText(text, isRealtime) {
+            // 移除占位符
             const placeholder = elements.resultContent.querySelector('.result-placeholder');
             if (placeholder) {
                 placeholder.remove();
             }
 
+            // 获取或创建结果展示div
             let resultDiv = elements.resultContent.querySelector('.result-text');
             if (!resultDiv) {
                 resultDiv = document.createElement('div');
@@ -365,28 +525,41 @@
                 elements.resultContent.appendChild(resultDiv);
             }
 
+            // 使用textContent安全地设置文本内容
             resultDiv.textContent = text;
+
+            // 根据是否实时结果设置颜色
             if (isRealtime) {
-                resultDiv.style.color = '#667eea';
+                resultDiv.style.color = '#667eea'; // 蓝色表示实时结果
             } else {
-                resultDiv.style.color = '';
+                resultDiv.style.color = ''; // 默认颜色表示最终结果
             }
         }
 
-        // ==========================================
-        // UI事件绑定
-        // ==========================================
+        // ============================================================
+        // 第六步：UI事件绑定
+        // ============================================================
+        // 将用户操作（点击按钮等）与SDK功能关联
 
-        // 配置面板切换
+        /**
+         * 配置面板切换
+         * 点击设置图标展开/收起配置面板
+         */
         elements.toggleConfigBtn.addEventListener('click', () => {
             const isExpanded = elements.configContent.classList.toggle('expanded');
             elements.toggleConfigBtn.querySelector('.icon').textContent = isExpanded ? '🔼' : '⚙️';
         });
 
-        // 开始录音按钮
+        /**
+         * 开始录音按钮点击事件
+         * 核心流程：
+         * 1. 更新SDK配置（服务器地址、模式、热词等）
+         * 2. 清空上一次的结果
+         * 3. 调用startRecording()开始录音
+         */
         elements.recordBtn.addEventListener('click', async () => {
             try {
-                // 更新配置
+                // 更新SDK配置
                 asrController.setUrl(elements.wsUrl.value);
                 asrController.setMode(elements.recognitionMode.value);
                 asrController.updateConfig({
@@ -398,31 +571,43 @@
                 elements.resultContent.innerHTML = '<div class="result-placeholder">识别内容将显示在这里...</div>';
                 elements.resultMeta.style.display = 'none';
 
-                // 开始录音
+                // 开始录音（SDK会自动处理连接、录音、识别全流程）
                 await asrController.startRecording();
             } catch (error) {
                 showError(error.message);
             }
         });
 
-        // 停止录音按钮
+        /**
+         * 停止录音按钮点击事件
+         * 调用stopRecording()停止录音并发送结束信号
+         */
         elements.recordStopBtn.addEventListener('click', async () => {
             await asrController.stopRecording();
         });
 
-        // 清空结果按钮
+        /**
+         * 清空结果按钮点击事件
+         * 清空页面显示和SDK内部缓存的结果
+         */
         elements.clearResultBtn.addEventListener('click', () => {
             elements.resultContent.innerHTML = '<div class="result-placeholder">识别内容将显示在这里...</div>';
             elements.resultMeta.style.display = 'none';
             asrController.clearResults();
         });
 
-        // 错误提示关闭按钮
+        /**
+         * 错误提示关闭按钮
+         */
         elements.errorCloseBtn.addEventListener('click', () => {
             elements.errorToast.style.display = 'none';
         });
 
-        // 测试连接按钮
+        /**
+         * 测试连接按钮
+         * 用于验证WebSocket服务器是否可连接
+         * 不开始录音，仅测试连接
+         */
         elements.testConnectionBtn.addEventListener('click', async () => {
             try {
                 asrController.setUrl(elements.wsUrl.value);
@@ -434,35 +619,43 @@
             }
         });
 
-        // 重置配置按钮
+        /**
+         * 重置配置按钮
+         * 将所有配置恢复为默认值
+         */
         elements.resetConfigBtn.addEventListener('click', () => {
+            // 重置UI
             elements.wsUrl.value = 'ws://192.168.1.17:10095/';
             elements.recognitionMode.value = 'offline';
             elements.hotwords.value = '';
             elements.useItn.checked = true;
-            
+
+            // 同步更新SDK配置
             asrController.setUrl(elements.wsUrl.value);
             asrController.setMode(elements.recognitionMode.value);
             asrController.updateConfig({
                 itn: true,
                 hotwords: null
             });
-            
+
             updateStatus('', '准备就绪');
         });
 
-        // 识别模式变更
+        /**
+         * 识别模式变更事件
+         * 当用户切换识别模式时，更新SDK配置并显示提示
+         */
         elements.recognitionMode.addEventListener('change', () => {
             const mode = elements.recognitionMode.value;
             asrController.setMode(mode);
-            
+
             const modeNames = {
                 'offline': '离线模式',
                 '2pass': '两遍模式',
                 'online': '实时模式'
             };
-            
-            // 显示提示
+
+            // 显示切换提示
             let toast = document.getElementById('toast-message');
             if (!toast) {
                 toast = document.createElement('div');
@@ -490,6 +683,21 @@
                 toast.style.opacity = '0';
             }, 2000);
         });
+
+        // ============================================================
+        // 页面卸载时清理资源（重要）
+        // ============================================================
+        /**
+         * 页面卸载前销毁SDK实例，释放资源
+         * 防止内存泄漏和音频设备占用
+         */
+        window.addEventListener('beforeunload', () => {
+            if (asrController) {
+                asrController.destroy();
+            }
+        });
+
+        console.log('[FunASR] SDK初始化完成，等待用户操作...');
 	</script>
 </body>
 </html>
