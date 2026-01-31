@@ -114,9 +114,10 @@
                 // 绑定错误恢复
                 this._bindErrorRecovery();
 
-                // 初始化WebSocket客户端
+                // 初始化WebSocket客户端，使用offline模式（默认）
                 this.wsClient = new WSClient({
-                    url: this.elements.wsUrl.value
+                    url: this.elements.wsUrl.value,
+                    mode: 'offline'
                 });
                 this._bindWSClientEvents();
 
@@ -150,6 +151,7 @@
                 configContent: document.getElementById('configContent'),
                 toggleConfigBtn: document.getElementById('toggleConfigBtn'),
                 wsUrl: document.getElementById('wsUrl'),
+                recognitionMode: document.getElementById('recognitionMode'),
                 hotwords: document.getElementById('hotwords'),
                 useItn: document.getElementById('useItn'),
                 testConnectionBtn: document.getElementById('testConnectionBtn'),
@@ -263,6 +265,26 @@
                     if (this.wsClient) {
                         this.wsClient.updateConfig({ url: this.elements.wsUrl.value });
                     }
+                });
+            }
+
+            // 识别模式变更
+            if (this.elements.recognitionMode) {
+                this.elements.recognitionMode.addEventListener('change', () => {
+                    const mode = this.elements.recognitionMode.value;
+                    console.log('ASRApp: Recognition mode changed to:', mode);
+                    
+                    if (this.wsClient) {
+                        this.wsClient.updateConfig({ mode: mode });
+                    }
+                    
+                    // 显示模式切换提示
+                    const modeNames = {
+                        'offline': '离线模式',
+                        '2pass': '两遍模式',
+                        'online': '实时模式'
+                    };
+                    this._showToast(`已切换到${modeNames[mode] || mode}`);
                 });
             }
         }
@@ -511,8 +533,12 @@
          * 获取连接参数
          */
         _getConnectionParams() {
+            // 从UI获取识别模式，默认为offline
+            const mode = this.elements.recognitionMode ? 
+                        this.elements.recognitionMode.value : 'offline';
+            
             return {
-                mode: '2pass',
+                mode: mode,
                 wavName: 'h5_' + Date.now(),
                 wavFormat: 'pcm',
                 audioFs: 16000,
@@ -595,6 +621,9 @@
             if (this.elements.wsUrl) {
                 this.elements.wsUrl.value = 'wss://192.168.1.17:10095/';
             }
+            if (this.elements.recognitionMode) {
+                this.elements.recognitionMode.value = 'offline';
+            }
             if (this.elements.hotwords) {
                 this.elements.hotwords.value = '';
             }
@@ -602,8 +631,11 @@
                 this.elements.useItn.checked = true;
             }
 
-            if (this.wsClient && this.elements.wsUrl) {
-                this.wsClient.updateConfig({ url: this.elements.wsUrl.value });
+            if (this.wsClient) {
+                this.wsClient.updateConfig({ 
+                    url: 'wss://192.168.1.17:10095/',
+                    mode: 'offline'
+                });
             }
         }
 
@@ -1087,6 +1119,47 @@
             } else {
                 alert(message);
             }
+        }
+
+        /**
+         * 显示Toast提示（自动消失）
+         */
+        _showToast(message, duration = 2000) {
+            // 创建toast元素
+            let toast = document.getElementById('toast-message');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'toast-message';
+                toast.style.cssText = `
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    background: rgba(0, 0, 0, 0.8);
+                    color: white;
+                    padding: 12px 24px;
+                    border-radius: 8px;
+                    font-size: 14px;
+                    z-index: 9999;
+                    pointer-events: none;
+                    opacity: 0;
+                    transition: opacity 0.3s;
+                `;
+                document.body.appendChild(toast);
+            }
+            
+            toast.textContent = message;
+            toast.style.opacity = '1';
+            
+            // 清除之前的定时器
+            if (this._toastTimer) {
+                clearTimeout(this._toastTimer);
+            }
+            
+            // 自动隐藏
+            this._toastTimer = setTimeout(() => {
+                toast.style.opacity = '0';
+            }, duration);
         }
 
         /**

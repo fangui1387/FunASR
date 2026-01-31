@@ -28,6 +28,15 @@
                     <div class="config-hint">支持 ws:// 或 wss:// 协议</div>
                 </div>
                 <div class="config-item">
+                    <label for="recognitionMode">识别模式:</label>
+                    <select id="recognitionMode">
+                        <option value="offline" selected>离线模式 (offline)</option>
+                        <option value="2pass">两遍模式 (2pass)</option>
+                        <option value="online">实时模式 (online)</option>
+                    </select>
+                    <div class="config-hint">离线模式：录音结束后识别；两遍模式：实时+离线；实时模式：流式识别</div>
+                </div>
+                <div class="config-item">
                     <label for="hotwords">热词配置 (可选):</label>
                     <textarea id="hotwords" rows="3" placeholder="阿里巴巴 20&#10;通义实验室 30"></textarea>
                     <div class="config-hint">每行一个热词，格式：热词 权重(1-100)</div>
