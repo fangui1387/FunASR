@@ -856,12 +856,22 @@
             const mode = result.mode || '';
             const isSentenceEnd = mode === '2pass-offline';
             
+            // 根据模式处理结果显示
+            const currentMode = this.elements.recognitionMode ? 
+                               this.elements.recognitionMode.value : 'offline';
+            
             console.log('[ASR Debug] ========== 识别结果回调 ==========');
             console.log('[ASR Debug] newText:', newText);
             console.log('[ASR Debug] mode:', mode);
             console.log('[ASR Debug] isSentenceEnd:', isSentenceEnd);
+            console.log('[ASR Debug] currentMode:', currentMode);
             console.log('[ASR Debug] 当前completedSentences数量:', this.completedSentences.length);
             console.log('[ASR Debug] 当前currentSentence:', this.currentSentence);
+            
+            // offline 模式下，显示识别中状态
+            if (currentMode === 'offline' && this.isRecording) {
+                this._updateStatus('processing', '录音结束，识别中...');
+            }
             
             if (!newText) {
                 this._updateResultDisplay();

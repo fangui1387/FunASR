@@ -454,11 +454,10 @@
             // 判断是否为最终结果：
             // 1. is_final 为 true（服务器明确标记）
             // 2. mode 为 "2pass-offline"（2pass模式的第二遍离线结果）
-            // 3. 已发送结束信号且收到回复（兼容模式）
-            // const isComplete = result.isFinal === true || 
-            //                   result.mode === '2pass-offline' ||
-            //                   (this._endSignalSent && result.text);
-            const isComplete = result.mode === '2pass-offline';
+            // 3. offline 模式下收到结果（离线模式只有最终结果）
+            const isComplete = result.isFinal === true || 
+                              result.mode === '2pass-offline' ||
+                              (this.config.mode === 'offline' && result.text);
             
             if (isComplete) {
                 console.log('[WSClient Debug] 触发 complete 事件 mode==2pass-offline');
