@@ -20,7 +20,7 @@
             // DOM元素缓存
             this.elements = {};
 
-            // 识别结果
+            // 识别结果（当前显示的文本）
             this.recognitionText = '';
             this.isRecording = false;
             this.recordingStartTime = 0;
@@ -112,9 +112,10 @@
                 // 绑定错误恢复
                 this._bindErrorRecovery();
 
-                // 初始化WebSocket客户端
+                // 初始化WebSocket客户端，使用2pass模式
                 this.wsClient = new WSClient({
-                    url: this.elements.wsUrl.value
+                    url: this.elements.wsUrl.value,
+                    mode: '2pass'
                 });
                 this._bindWSClientEvents();
 
@@ -510,12 +511,20 @@
          */
         _getConnectionParams() {
             return {
-                mode: 'offline',
+                mode: '2pass',
                 wavName: 'h5_' + Date.now(),
                 wavFormat: 'pcm',
                 audioFs: 16000,
                 itn: this.elements.useItn ? this.elements.useItn.checked : true,
-                hotwords: this._parseHotwords(this.elements.hotwords ? this.elements.hotwords.value : '')
+                hotwords: this._parseHotwords(this.elements.hotwords ? this.elements.hotwords.value : ''),
+                // HTTP头信息（通过连接参数发送，浏览器WebSocket不支持直接设置HTTP头）
+                headers: {
+                    'Tx-Code': 'your-tx-code',
+                    'Access_Key_Id': 'your-access-key',
+                    'Sec-Node-No': 'your-node-no',
+                    'Trace-Id': 'trace-' + Date.now(),
+                    'Content-Type': 'application/json'
+                }
             };
         }
 
@@ -645,7 +654,14 @@
 
             try {
                 // 清空之前的识别结果
+                console.log('[ASR Debug] ========== 开始录音，清空识别文本 ==========');
+                console.log('[ASR Debug] 清空前recognitionText:', this.recognitionText);
+                
                 this.recognitionText = '';
+                
+                console.log('[ASR Debug] 已清空recognitionText');
+                console.log('[ASR Debug] ============================================');
+                
                 this._updateResultDisplay();
 
                 // 开始录音
@@ -796,18 +812,44 @@
         }
 
         /**
-         * 处理识别结果
+         * 处理识别结果（实时流式结果）
+         * 智能拼接文本：处理增量更新和全量更新两种情况
          */
         _handleRecognitionResult(result) {
-            this.recognitionText = result.text || '';
+            const newText = result.text || '';
+            
+            console.log('[ASR Debug] ========== 识别结果回调 ==========');
+            console.log('[ASR Debug] result:', result);
+            
+            if (!newText) {
+                this._updateResultDisplay();
+                return;
+            }
+            
+            this.recognitionText += newText;
+            console.log('[ASR Debug] 中间结果展示:', this.recognitionText);
+        
             this._updateResultDisplay();
         }
 
         /**
-         * 处理识别完成
+         * 处理识别完成（最终结束）
+         * 以后台返回的最终内容为准
          */
         _handleRecognitionComplete(result) {
-            this.recognitionText = result.text || '';
+            const finalText = result.text || '';
+            
+            console.log('[ASR Debug] ========== 识别完成回调 ==========');
+            console.log('[ASR Debug] finalText:', finalText);
+            console.log('[ASR Debug] 完成前recognitionText:', this.recognitionText);
+            
+            // 以最终返回的内容为准
+            this.recognitionText = finalText;
+            
+            console.log('[ASR Debug] ✓ 已用最终结果替换');
+            console.log('[ASR Debug] 最终展示文本:', this.recognitionText);
+            console.log('[ASR Debug] ======================================');
+            
             this._updateResultDisplay();
 
             // 显示元信息
@@ -823,13 +865,25 @@
          * 更新结果显示
          */
         _updateResultDisplay() {
-            if (!this.elements.resultContent) return;
+            console.log('[ASR Debug] >>> _updateResultDisplay 被调用');
+            console.log('[ASR Debug] resultContent元素存在:', !!this.elements.resultContent);
+            console.log('[ASR Debug] 当前recognitionText:', this.recognitionText);
+            
+            if (!this.elements.resultContent) {
+                console.log('[ASR Debug] ✗ resultContent元素不存在，退出更新');
+                return;
+            }
 
             if (this.recognitionText) {
-                this.elements.resultContent.innerHTML = `<div class="result-text">${this.escapeHtml(this.recognitionText)}</div>`;
+                const html = `<div class="result-text">${this.escapeHtml(this.recognitionText)}</div>`;
+                this.elements.resultContent.innerHTML = html;
+                console.log('[ASR Debug] ✓ 已更新显示内容，长度:', this.recognitionText.length);
             } else {
                 this.elements.resultContent.innerHTML = '<div class="result-placeholder">识别内容将显示在这里...</div>';
+                console.log('[ASR Debug] ✓ 已显示占位符');
             }
+            
+            console.log('[ASR Debug] <<< _updateResultDisplay 完成');
         }
 
         /**

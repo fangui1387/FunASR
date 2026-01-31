@@ -23,7 +23,7 @@
     // 默认配置
     const DEFAULT_CONFIG = {
         url: 'wss://192.168.1.17:10095/',
-        mode: 'offline',
+        mode: '2pass',
         wavName: 'h5_recording',
         wavFormat: 'pcm',
         audioFs: 16000,
@@ -36,7 +36,12 @@
         connectionTimeout: 10000,
         heartbeatInterval: 30000,
         maxQueueSize: 100, // 最大发送队列大小
-        sendTimeout: 5000 // 发送超时时间(ms)
+        sendTimeout: 5000, // 发送超时时间(ms)
+        headers: {
+            token: 'your-auth-token',
+            clientId: 'web-client-001',
+            version: '1.0.0'
+        } // URL查询参数（WebSocket不支持HTTP请求头）
     };
 
     /**
@@ -68,6 +73,9 @@
             
             // 识别结果缓存
             this._recognitionResults = [];
+            
+            // 结束信号标志（用于离线模式判断最终结果）
+            this._endSignalSent = false;
             
             // 连接参数（在连接时发送）
             this._connectionParams = null;
@@ -222,6 +230,27 @@
         }
 
         /**
+         * 构建带查询参数的 WebSocket URL
+         */
+        _buildWebSocketUrl(baseUrl, headers = {}) {
+            try {
+                const url = new URL(baseUrl);
+                
+                // 添加查询参数
+                Object.entries(headers).forEach(([key, value]) => {
+                    if (value !== undefined && value !== null) {
+                        url.searchParams.set(key, String(value));
+                    }
+                });
+                
+                return url.toString();
+            } catch (error) {
+                console.error('WSClient: Failed to build WebSocket URL:', error);
+                return baseUrl;
+            }
+        }
+
+        /**
          * 执行连接
          */
         _doConnect(params) {
@@ -247,7 +276,13 @@
             this._emit('connecting');
 
             try {
-                this.ws = new WebSocket(this.config.url);
+                // 构建带查询参数的 URL
+                const wsUrl = this._buildWebSocketUrl(
+                    this.config.url, 
+                    { ...this.config.headers, ...params.headers }
+                );
+                
+                this.ws = new WebSocket(wsUrl);
                 
                 // 设置连接超时
                 this._connectionTimer = setTimeout(() => {
@@ -290,6 +325,7 @@
             this.state = WSState.OPEN;
             this._reconnectCount = 0;
             this._isConnecting = false;
+            this._endSignalSent = false; // 连接成功后重置结束信号标志
             
             console.log('WSClient: Connection opened');
             
@@ -404,14 +440,26 @@
                 stampSents: data.stamp_sents,
                 receiveTime: Date.now()
             };
-            
+                        
             this._recognitionResults.push(result);
+            
             this._emit('result', result);
             
-            // 如果是最终结果，触发完成事件
-            if (result.isFinal || data.mode === 'offline') {
+            // 判断是否为最终结果：
+            // 1. is_final 为 true（服务器明确标记）
+            // 2. mode 为 "2pass-offline"（2pass模式的第二遍离线结果）
+            // 3. 已发送结束信号且收到回复（兼容模式）
+            // const isComplete = result.isFinal === true || 
+            //                   result.mode === '2pass-offline' ||
+            //                   (this._endSignalSent && result.text);
+            const isComplete = result.mode === '2pass-offline';
+            
+            if (isComplete) {
+                console.log('[WSClient Debug] 触发 complete 事件 mode==2pass-offline');
+                // 重置结束信号标志
+                this._endSignalSent = false;
                 this._emit('complete', result);
-            }
+            } 
         }
 
         /**
@@ -420,12 +468,10 @@
         _sendJson(data, timeout = this.config.sendTimeout) {
             // 检查 WebSocket 实例是否存在
             if (!this.ws) {
-                console.warn('WSClient: WebSocket instance is null, cannot send JSON');
                 return false;
             }
             
             if (this.state !== WSState.OPEN) {
-                console.warn('WSClient: Cannot send, connection not open');
                 return false;
             }
             
@@ -434,7 +480,6 @@
                 this.ws.send(jsonStr);
                 return true;
             } catch (error) {
-                console.error('WSClient: Error sending JSON:', error);
                 return false;
             }
         }
@@ -445,17 +490,13 @@
         sendAudio(audioData, timeout = this.config.sendTimeout) {
             // 检查 WebSocket 实例是否存在
             if (!this.ws) {
-                console.warn('WSClient: WebSocket instance is null, cannot send');
                 return false;
             }
             
             if (this.state !== WSState.OPEN) {
-                console.warn('WSClient: Connection not open, queueing data');
                 // 如果未连接，加入发送队列
                 if (this._sendQueue.length < this.config.maxQueueSize) {
                     this._sendQueue.push(audioData);
-                } else {
-                    console.warn('WSClient: Send queue is full, dropping data');
                 }
                 return false;
             }
@@ -468,14 +509,12 @@
                 } else if (audioData instanceof ArrayBuffer) {
                     buffer = audioData;
                 } else {
-                    console.warn('WSClient: Unsupported audio data type:', typeof audioData, audioData.constructor.name);
                     return false;
                 }
                 
                 this.ws.send(buffer);
                 return true;
             } catch (error) {
-                console.error('WSClient: Error sending audio:', error);
                 // 发送失败，加入队列稍后重试
                 if (this._sendQueue.length < this.config.maxQueueSize) {
                     this._sendQueue.push(audioData);
@@ -498,12 +537,10 @@
                     } else if (data instanceof ArrayBuffer) {
                         buffer = data;
                     } else {
-                        console.warn('WSClient: Unsupported queued data type:', typeof data);
                         continue;
                     }
                     this.ws.send(buffer);
                 } catch (error) {
-                    console.error('WSClient: Error sending queued data:', error);
                     // 将数据放回队列头部
                     this._sendQueue.unshift(data);
                     break;
@@ -518,6 +555,9 @@
             const endSignal = {
                 is_speaking: false
             };
+            
+            // 标记已发送结束信号，下一条收到的消息将作为最终结果
+            this._endSignalSent = true;
             
             return this._sendJson(endSignal);
         }
@@ -537,7 +577,6 @@
                 // 检查心跳响应超时
                 const timeSinceLastPong = Date.now() - this._lastPongTime;
                 if (timeSinceLastPong > this.config.heartbeatInterval * 2) {
-                    console.warn('WSClient: Heartbeat timeout, reconnecting...');
                     this._cleanupWebSocket();
                     // 触发重连
                     this._scheduleReconnect();
@@ -566,8 +605,6 @@
          */
         _scheduleReconnect() {
             this._reconnectCount++;
-            
-            console.log(`WSClient: Scheduling reconnect, attempt ${this._reconnectCount}`);
             
             this._reconnectTimer = setTimeout(() => {
                 this._emit('reconnecting', { attempt: this._reconnectCount });
@@ -663,6 +700,36 @@
          */
         updateConfig(newConfig) {
             this.config = { ...this.config, ...newConfig };
+        }
+
+        /**
+         * 更新请求头（URL查询参数）
+         * WebSocket不支持HTTP请求头，通过URL查询参数传递额外信息
+         */
+        updateHeaders(headers) {
+            this.config.headers = { ...this.config.headers, ...headers };
+            console.log('WSClient: Headers updated:', this.config.headers);
+        }
+
+        /**
+         * 设置单个请求头
+         */
+        setHeader(key, value) {
+            this.config.headers[key] = value;
+        }
+
+        /**
+         * 获取当前请求头
+         */
+        getHeaders() {
+            return { ...this.config.headers };
+        }
+
+        /**
+         * 清除所有请求头
+         */
+        clearHeaders() {
+            this.config.headers = {};
         }
 
         /**
