@@ -11,8 +11,6 @@ FunASR Web SDK 提供了在 H5 页面中实现语音识别功能的能力，支�
 在 HTML 文件的 `<head>` 或 `<body>` 底部引入以下文件：
 
 ```html
-<!-- 录音核心库 -->
-<script src="path/to/funasr/lib/recorder-core.js"></script>
 
 <!-- SDK 核心模块 -->
 <script src="path/to/funasr/js/stateManager.js"></script>
@@ -430,7 +428,6 @@ asr.destroy();
     </div>
 
     <!-- 引入 SDK -->
-    <script src="path/to/funasr/lib/recorder-core.js"></script>
     <script src="path/to/funasr/js/stateManager.js"></script>
     <script src="path/to/funasr/js/errorHandler.js"></script>
     <script src="path/to/funasr/js/wsClient.js"></script>
