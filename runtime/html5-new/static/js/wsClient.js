@@ -37,11 +37,7 @@
         heartbeatInterval: 30000,
         maxQueueSize: 100, // 最大发送队列大小
         sendTimeout: 5000, // 发送超时时间(ms)
-        headers: {
-            token: 'your-auth-token',
-            clientId: 'web-client-001',
-            version: '1.0.0'
-        } // URL查询参数（WebSocket不支持HTTP请求头）
+        headers: {} // URL查询参数（WebSocket不支持HTTP请求头），请根据实际需求配置认证信息
     };
 
     /**
@@ -170,14 +166,26 @@
             if (!url) {
                 return { valid: false, error: 'URL不能为空' };
             }
-            
+
             const wsPattern = /^wss?:\/\/.+/i;
             if (!wsPattern.test(url)) {
                 return { valid: false, error: 'URL格式不正确，必须以ws://或wss://开头' };
             }
-            
+
             try {
-                new URL(url);
+                const urlObj = new URL(url);
+
+                // 安全检查：非本地环境使用 ws:// 时发出警告
+                const hostname = urlObj.hostname;
+                const isLocalhost = hostname === 'localhost' ||
+                                   hostname === '127.0.0.1' ||
+                                   hostname === '[::1]' ||
+                                   hostname === '0.0.0.0';
+
+                if (urlObj.protocol === 'ws:' && !isLocalhost) {
+                    console.warn('WSClient: 在非本地环境使用未加密的 WebSocket (ws://) 连接，数据可能被窃听。建议使用 wss://');
+                }
+
                 return { valid: true };
             } catch (e) {
                 return { valid: false, error: 'URL格式不正确' };

@@ -141,8 +141,14 @@
     <script src="js/audioRecorder.js"></script>
     <script src="js/app.js"></script>
 	<script>
-        // 初始化 vConsole
-        const vConsole = new VConsole();
+        // 初始化 vConsole（仅在开发环境启用）
+        const isDevEnvironment = location.hostname === 'localhost' ||
+                                 location.hostname === '127.0.0.1' ||
+                                 location.search.includes('debug=true');
+        let vConsole = null;
+        if (isDevEnvironment) {
+            vConsole = new VConsole();
+        }
 
         // ==========================================
         // FunASR SDK 集成示例
@@ -193,23 +199,17 @@
         // 实时识别结果
         asrController.onResult((result) => {
             console.log('[ASR Result]', result);
-            
-            // 移除占位符
-            const placeholder = elements.resultContent.querySelector('.result-placeholder');
-            if (placeholder) {
-                placeholder.remove();
-            }
 
             // 获取当前模式
             const currentMode = elements.recognitionMode.value;
-            
+
             // 根据模式显示结果
             if (currentMode === 'offline') {
                 // offline模式：直接显示
-                elements.resultContent.innerHTML = `<div class="result-text">${escapeHtml(result.text)}</div>`;
+                setResultText(result.text || '', false);
             } else {
                 // 2pass/online模式：显示拼接后的完整文本
-                elements.resultContent.innerHTML = `<div class="result-text" style="color: #667eea;">${escapeHtml(result.fullText)}</div>`;
+                setResultText(result.fullText || '', true);
             }
 
             // 更新元信息
@@ -231,7 +231,7 @@
 
             // 显示最终结果
             if (result.fullText || result.text) {
-                elements.resultContent.innerHTML = `<div class="result-text">${escapeHtml(result.fullText || result.text)}</div>`;
+                setResultText(result.fullText || result.text || '', false);
             }
 
             // 更新元信息
@@ -336,9 +336,41 @@
         }
 
         function escapeHtml(text) {
+            if (typeof text !== 'string') {
+                return '';
+            }
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function sanitizeText(text) {
+            if (typeof text !== 'string') {
+                return '';
+            }
+            // 移除潜在的危险字符和控制字符
+            return text.replace(/[<>]/g, '');
+        }
+
+        function setResultText(text, isRealtime) {
+            const placeholder = elements.resultContent.querySelector('.result-placeholder');
+            if (placeholder) {
+                placeholder.remove();
+            }
+
+            let resultDiv = elements.resultContent.querySelector('.result-text');
+            if (!resultDiv) {
+                resultDiv = document.createElement('div');
+                resultDiv.className = 'result-text';
+                elements.resultContent.appendChild(resultDiv);
+            }
+
+            resultDiv.textContent = text;
+            if (isRealtime) {
+                resultDiv.style.color = '#667eea';
+            } else {
+                resultDiv.style.color = '';
+            }
         }
 
         // ==========================================
