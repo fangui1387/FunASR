@@ -69,6 +69,7 @@
             
             // 识别结果缓存
             this._recognitionResults = [];
+            this._maxResultsSize = 1000; // 最大结果数限制，防止内存溢出
             
             // 结束信号标志（用于离线模式判断最终结果）
             this._endSignalSent = false;
@@ -474,6 +475,10 @@
             console.log('[WSClient Debug] this.config.mode:', this.config.mode);
 
             this._recognitionResults.push(result);
+            // 限制结果数组大小防止内存溢出
+            if (this._recognitionResults.length > this._maxResultsSize) {
+                this._recognitionResults = this._recognitionResults.slice(-this._maxResultsSize);
+            }
 
             // 触发result事件，用于实时显示
             this._emit('result', result);
@@ -595,6 +600,9 @@
          * 启动心跳
          */
         _startHeartbeat() {
+            // 先停止已有心跳，防止重复启动
+            this._stopHeartbeat();
+            
             this._lastPongTime = Date.now();
             this._lastPingTime = Date.now();
             

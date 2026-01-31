@@ -42,6 +42,7 @@
             
             // 音频数据缓冲
             this.sampleBuffer = [];
+            this._maxBufferSize = 16000 * 300; // 最大缓冲300秒的音频数据（16kHz采样率）
             
             // 录音统计
             this.stats = {
@@ -229,8 +230,12 @@
                 // 转换为 Int16Array
                 const int16Data = this._floatToInt16(resampledData);
                 
-                // 添加到缓冲
+                // 添加到缓冲，限制缓冲区大小防止内存溢出
                 this.sampleBuffer.push(...int16Data);
+                // 如果缓冲区过大，丢弃最旧的数据（保留最近30秒）
+                if (this.sampleBuffer.length > this._maxBufferSize) {
+                    this.sampleBuffer = this.sampleBuffer.slice(-this._maxBufferSize);
+                }
                 this.stats.totalSamples += int16Data.length;
                 
                 // 计算块大小 (chunkDuration ms 的数据)

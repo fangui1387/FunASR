@@ -47,10 +47,12 @@
             // 识别结果存储
             this.results = [];
             this.currentText = '';
-            
+            this._maxResultsSize = 1000; // 最大结果数限制，防止内存溢出
+
             // 多句识别状态（用于2pass/online模式）
             this.completedSentences = [];
             this.currentSentence = '';
+            this._maxSentencesSize = 500; // 最大句子数限制
             
             // 事件监听器
             this._listeners = {
@@ -186,6 +188,10 @@
                 // 句子结束，保存到已完成列表
                 // 服务器返回的是完整句子文本
                 this.completedSentences.push(newText);
+                // 限制句子数组大小防止内存溢出
+                if (this.completedSentences.length > this._maxSentencesSize) {
+                    this.completedSentences = this.completedSentences.slice(-this._maxSentencesSize);
+                }
                 this.currentSentence = '';
                 console.log('[FunASRController Debug] 句子结束，已保存到completedSentences');
             } else {
@@ -212,9 +218,12 @@
          */
         _handleRecognitionComplete(result) {
             const finalText = result.text || '';
-            
-            // 保存结果
+
+            // 保存结果，限制数组大小防止内存溢出
             this.results.push(result);
+            if (this.results.length > this._maxResultsSize) {
+                this.results = this.results.slice(-this._maxResultsSize);
+            }
             
             // 2pass/online模式：使用服务器返回的最终结果
             if (this.config.mode === '2pass' || this.config.mode === 'online') {
