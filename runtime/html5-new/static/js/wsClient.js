@@ -23,7 +23,7 @@
     // 默认配置
     const DEFAULT_CONFIG = {
         url: 'wss://192.168.1.17:10095/',
-        mode: '2pass',
+        mode: 'offline',
         wavName: 'h5_recording',
         wavFormat: 'pcm',
         audioFs: 16000,
@@ -431,6 +431,9 @@
          * 处理识别结果
          */
         _handleRecognitionResult(data) {
+            console.log('[WSClient Debug] ========== _handleRecognitionResult ==========');
+            console.log('[WSClient Debug] 原始data:', JSON.stringify(data));
+            
             const result = {
                 mode: data.mode || 'offline',
                 wavName: data.wav_name,
@@ -440,6 +443,9 @@
                 stampSents: data.stamp_sents,
                 receiveTime: Date.now()
             };
+            
+            console.log('[WSClient Debug] 解析后的result:', JSON.stringify(result));
+            console.log('[WSClient Debug] result.mode:', result.mode);
                         
             this._recognitionResults.push(result);
             

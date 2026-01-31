@@ -20,8 +20,10 @@
             // DOM元素缓存
             this.elements = {};
 
-            // 识别结果（当前显示的文本）
-            this.recognitionText = '';
+            // 多句语音识别结果存储
+            this.completedSentences = []; // 已完成的句子列表
+            this.currentSentence = '';    // 当前正在识别的句子
+            this.recognitionText = '';    // 完整展示文本（completed + current）
             this.isRecording = false;
             this.recordingStartTime = 0;
             this.durationTimer = null;
@@ -112,10 +114,9 @@
                 // 绑定错误恢复
                 this._bindErrorRecovery();
 
-                // 初始化WebSocket客户端，使用2pass模式
+                // 初始化WebSocket客户端
                 this.wsClient = new WSClient({
-                    url: this.elements.wsUrl.value,
-                    mode: '2pass'
+                    url: this.elements.wsUrl.value
                 });
                 this._bindWSClientEvents();
 
@@ -654,12 +655,15 @@
 
             try {
                 // 清空之前的识别结果
-                console.log('[ASR Debug] ========== 开始录音，清空识别文本 ==========');
-                console.log('[ASR Debug] 清空前recognitionText:', this.recognitionText);
+                console.log('[ASR Debug] ========== 开始录音，清空所有识别数据 ==========');
+                console.log('[ASR Debug] 清空前completedSentences数量:', this.completedSentences.length);
+                console.log('[ASR Debug] 清空前currentSentence:', this.currentSentence);
                 
+                this.completedSentences = [];
+                this.currentSentence = '';
                 this.recognitionText = '';
                 
-                console.log('[ASR Debug] 已清空recognitionText');
+                console.log('[ASR Debug] 已清空所有识别数据');
                 console.log('[ASR Debug] ============================================');
                 
                 this._updateResultDisplay();
@@ -812,44 +816,102 @@
         }
 
         /**
-         * 处理识别结果（实时流式结果）
-         * 智能拼接文本：处理增量更新和全量更新两种情况
+         * 处理识别结果（多句语音识别）
+         * mode=='2pass-offline' 表示当前句子结束
          */
         _handleRecognitionResult(result) {
             const newText = result.text || '';
+            const mode = result.mode || '';
+            const isSentenceEnd = mode === '2pass-offline';
             
             console.log('[ASR Debug] ========== 识别结果回调 ==========');
-            console.log('[ASR Debug] result:', result);
+            console.log('[ASR Debug] newText:', newText);
+            console.log('[ASR Debug] mode:', mode);
+            console.log('[ASR Debug] isSentenceEnd:', isSentenceEnd);
+            console.log('[ASR Debug] 当前completedSentences数量:', this.completedSentences.length);
+            console.log('[ASR Debug] 当前currentSentence:', this.currentSentence);
             
             if (!newText) {
                 this._updateResultDisplay();
                 return;
             }
             
-            this.recognitionText += newText;
-            console.log('[ASR Debug] 中间结果展示:', this.recognitionText);
-        
+            if (isSentenceEnd) {
+                // 句子结束，保存到已完成列表
+                this.completedSentences.push(newText);
+                this.currentSentence = '';
+                console.log('[ASR Debug] ✓✓✓ 句子结束！已保存到completedSentences');
+                console.log('[ASR Debug]   已保存的句子:', newText);
+                console.log('[ASR Debug]   completedSentences长度:', this.completedSentences.length);
+            } else {
+                // 中间结果，更新当前句子
+                this.currentSentence += newText;
+                console.log('[ASR Debug] ✓ 更新currentSentence:', newText);
+            }
+            
+            // 更新完整展示文本
+            // this._updateFullText();
+            this.recognitionText = this.completedSentences.join('') + this.currentSentence;
             this._updateResultDisplay();
         }
 
         /**
+         * 更新完整展示文本（已完成句子 + 当前句子）
+         */
+        // _updateFullText() {
+        //     // 使用空格连接已完成的句子，让多句之间有空格分隔
+        //     const completedPart = this.completedSentences.join(' ');
+        //     // 如果有已完成的句子，且当前有正在识别的句子，中间加空格
+        //     this.recognitionText = completedPart + this.currentSentence;
+            
+        //     console.log('[ASR Debug] ========== 更新完整文本 ==========');
+        //     console.log('[ASR Debug] completedSentences数组:', JSON.stringify(this.completedSentences));
+        //     console.log('[ASR Debug] completedPart:', completedPart);
+        //     console.log('[ASR Debug] separator:', JSON.stringify(separator));
+        //     console.log('[ASR Debug] currentSentence:', this.currentSentence);
+        //     console.log('[ASR Debug] >>> 最终recognitionText:', this.recognitionText);
+        //     console.log('[ASR Debug] 文本长度:', this.recognitionText.length);
+        //     console.log('[ASR Debug] ====================================');
+        // }
+
+        /**
          * 处理识别完成（最终结束）
-         * 以后台返回的最终内容为准
+         * 保存最后一句（如果有）
          */
         _handleRecognitionComplete(result) {
             const finalText = result.text || '';
             
             console.log('[ASR Debug] ========== 识别完成回调 ==========');
             console.log('[ASR Debug] finalText:', finalText);
-            console.log('[ASR Debug] 完成前recognitionText:', this.recognitionText);
+            console.log('[ASR Debug] 完成前completedSentences数量:', this.completedSentences.length);
+            console.log('[ASR Debug] 完成前currentSentence:', this.currentSentence);
             
-            // 以最终返回的内容为准
+            // // 如果还有未保存的当前句子，保存它
+            // if (this.currentSentence && this.currentSentence.trim()) {
+            //     this.completedSentences.push(this.currentSentence);
+            //     this.currentSentence = '';
+            //     console.log('[ASR Debug] ✓ 保存最后一句到completedSentences');
+            // }
+            
+            // // 使用最终结果更新（如果服务器返回了不同的结果）
+            // if (finalText && finalText.trim()) {
+            //     // 替换最后一句或添加为新句子
+            //     if (this.completedSentences.length > 0) {
+            //         this.completedSentences[this.completedSentences.length - 1] = finalText;
+            //     } else {
+            //         this.completedSentences.push(finalText);
+            //     }
+            //     console.log('[ASR Debug] ✓ 使用服务器最终结果更新');
+            // }
+            
+            // // 更新完整文本
+            // this._updateFullText();
+            
+            // console.log('[ASR Debug] 完成后completedSentences数量:', this.completedSentences.length);
+            // console.log('[ASR Debug] 最终展示文本:', this.recognitionText);
+            // console.log('[ASR Debug] ======================================');
+            
             this.recognitionText = finalText;
-            
-            console.log('[ASR Debug] ✓ 已用最终结果替换');
-            console.log('[ASR Debug] 最终展示文本:', this.recognitionText);
-            console.log('[ASR Debug] ======================================');
-            
             this._updateResultDisplay();
 
             // 显示元信息
@@ -867,7 +929,9 @@
         _updateResultDisplay() {
             console.log('[ASR Debug] >>> _updateResultDisplay 被调用');
             console.log('[ASR Debug] resultContent元素存在:', !!this.elements.resultContent);
-            console.log('[ASR Debug] 当前recognitionText:', this.recognitionText);
+            console.log('[ASR Debug] completedSentences数量:', this.completedSentences.length);
+            console.log('[ASR Debug] currentSentence:', this.currentSentence);
+            console.log('[ASR Debug] 完整recognitionText:', this.recognitionText);
             
             if (!this.elements.resultContent) {
                 console.log('[ASR Debug] ✗ resultContent元素不存在，退出更新');
@@ -877,7 +941,7 @@
             if (this.recognitionText) {
                 const html = `<div class="result-text">${this.escapeHtml(this.recognitionText)}</div>`;
                 this.elements.resultContent.innerHTML = html;
-                console.log('[ASR Debug] ✓ 已更新显示内容，长度:', this.recognitionText.length);
+                console.log('[ASR Debug] ✓ 已更新显示内容');
             } else {
                 this.elements.resultContent.innerHTML = '<div class="result-placeholder">识别内容将显示在这里...</div>';
                 console.log('[ASR Debug] ✓ 已显示占位符');
@@ -890,6 +954,8 @@
          * 清空结果
          */
         _clearResults() {
+            this.completedSentences = [];
+            this.currentSentence = '';
             this.recognitionText = '';
             this._updateResultDisplay();
             if (this.elements.resultMeta) {
