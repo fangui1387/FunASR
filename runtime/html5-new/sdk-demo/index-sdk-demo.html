@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FunASR 语音识别</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+
+        .status-bar {
+            text-align: center;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            color: #666;
+            transition: all 0.3s ease;
+        }
+
+        .status-bar.recording {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        .status-bar.connected {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .status-bar.error {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+
+        .btn-start {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-start:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-start:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .btn-stop {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .btn-stop:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(245, 87, 108, 0.4);
+        }
+
+        .btn-stop:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .result-panel {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            min-height: 150px;
+        }
+
+        .result-label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .result-text {
+            font-size: 18px;
+            color: #333;
+            line-height: 1.6;
+            word-wrap: break-word;
+            min-height: 80px;
+        }
+
+        .result-text.placeholder {
+            color: #999;
+            font-style: italic;
+        }
+
+        .config-panel {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f0f4f8;
+            border-radius: 10px;
+            font-size: 13px;
+        }
+
+        .config-item {
+            margin-bottom: 10px;
+        }
+
+        .config-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .config-label {
+            color: #666;
+            font-weight: 600;
+        }
+
+        .config-value {
+            color: #333;
+            margin-left: 5px;
+        }
+
+        .error-message {
+            background: #ffebee;
+            color: #c62828;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        .mode-selector {
+            margin-bottom: 20px;
+        }
+
+        .mode-selector label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: #666;
+            font-weight: 600;
+        }
+
+        .mode-selector select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+            transition: border-color 0.3s ease;
+        }
+
+        .mode-selector select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .mode-description {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #999;
+            line-height: 1.5;
+        }
+
+        .example-section {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .example-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .example-code {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .example-code .comment {
+            color: #75715e;
+        }
+
+        .example-code .keyword {
+            color: #66d9ef;
+        }
+
+        .example-code .string {
+            color: #e6db74;
+        }
+
+        .example-code .function {
+            color: #a6e22e;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 FunASR 语音识别</h1>
+        
+        <div class="mode-selector">
+            <label for="modeSelect">选择识别模式：</label>
+            <select id="modeSelect">
+                <option value="offline">offline - 离线模式（录音结束后识别，准确率最高）</option>
+                <option value="2pass">2pass - 两遍模式（实时+离线精修，推荐）</option>
+                <option value="online">online - 实时模式（边说边识别，实时性好）</option>
+            </select>
+            <div class="mode-description" id="modeDescription">
+                离线模式：录音结束后一次性识别，适合对准确率要求高的场景
+            </div>
+        </div>
+
+        <div class="status-bar" id="statusBar">
+            准备就绪
+        </div>
+
+        <div class="button-group">
+            <button class="btn btn-start" id="startBtn">开始录音</button>
+            <button class="btn btn-stop" id="stopBtn" disabled>结束录音</button>
+        </div>
+
+        <div class="result-panel">
+            <div class="result-label">识别结果</div>
+            <div class="result-text placeholder" id="resultText">
+                识别内容将显示在这里...
+            </div>
+        </div>
+
+        <div class="config-panel">
+            <div class="config-item">
+                <span class="config-label">服务器地址:</span>
+                <span class="config-value">ws://127.0.0.1:10095/</span>
+            </div>
+            <div class="config-item">
+                <span class="config-label">当前模式:</span>
+                <span class="config-value" id="currentMode">offline (离线模式)</span>
+            </div>
+        </div>
+
+        <!-- 2pass 模式示例 -->
+        <div class="example-section" id="example2pass" style="display: none;">
+            <div class="example-title">💡 2pass 模式代码示例</div>
+            <div class="example-code">// 2pass 模式：实时识别 + 离线精修
+const asr = new FunASRController({
+    wsUrl: 'ws://127.0.0.1:10095/',
+    mode: '2pass',        // 两遍模式
+    itn: true,            // 启用逆文本标准化
+    chunkSize: [5, 10, 5] // 音频分片配置
+});
+
+// 实时结果（第一遍）
+asr.onResult((result) => {
+    // result.mode 可能为 '2pass-online'（实时结果）
+    // 或 '2pass-offline'（最终精修结果）
+    console.log('识别模式:', result.mode);
+    console.log('实时文本:', result.text);
+    console.log('完整文本:', result.fullText);
+});
+
+// 识别完成
+asr.onComplete((result) => {
+    console.log('最终精修结果:', result.fullText);
+});</div>
+        </div>
+
+        <!-- online 模式示例 -->
+        <div class="example-section" id="exampleOnline" style="display: none;">
+            <div class="example-title">💡 online 模式代码示例</div>
+            <div class="example-code">// online 模式：实时流式识别
+const asr = new FunASRController({
+    wsUrl: 'ws://127.0.0.1:10095/',
+    mode: 'online',       // 实时模式
+    itn: true,            // 启用逆文本标准化
+    chunkInterval: 10     // 每10ms发送一次音频数据
+});
+
+// 实时识别结果
+asr.onResult((result) => {
+    // 边说边识别，实时返回结果
+    console.log('实时文本:', result.text);
+    console.log('完整文本:', result.fullText);
+    console.log('是否最终结果:', result.isFinal);
+});
+
+// 识别完成
+asr.onComplete((result) => {
+    console.log('识别完成:', result.fullText);
+});</div>
+        </div>
+
+        <!-- offline 模式示例 -->
+        <div class="example-section" id="exampleOffline">
+            <div class="example-title">💡 offline 模式代码示例</div>
+            <div class="example-code">// offline 模式：录音结束后一次性识别
+const asr = new FunASRController({
+    wsUrl: 'ws://127.0.0.1:10095/',
+    mode: 'offline',      // 离线模式
+    itn: true             // 启用逆文本标准化
+});
+
+// 识别结果（仅在录音结束后返回）
+asr.onResult((result) => {
+    console.log('识别文本:', result.text);
+});
+
+// 识别完成
+asr.onComplete((result) => {
+    console.log('最终识别结果:', result.fullText);
+});</div>
+        </div>
+
+        <div class="error-message" id="errorMessage"></div>
+    </div>
+
+    <!-- 引入 FunASR SDK（合并版） -->
+    <script src="./funasr-sdk.js"></script>
+    <script src="./vconsole.min.js"></script>
+
+    <script>
+        // vConsole 是移动端调试工具，仅在开发环境启用
+        // 生产环境建议移除或禁用
+        const isDevEnvironment = location.hostname === 'localhost' ||
+                                 location.hostname === '127.0.0.1' ||
+                                 location.search.includes('debug=true');
+        let vConsole = null;
+        if (isDevEnvironment) {
+            vConsole = new VConsole();
+            console.log('[FunASR] 开发环境已启用vConsole调试');
+        }
+        
+        // DOM 元素
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusBar = document.getElementById('statusBar');
+        const resultText = document.getElementById('resultText');
+        const errorMessage = document.getElementById('errorMessage');
+        const modeSelect = document.getElementById('modeSelect');
+        const modeDescription = document.getElementById('modeDescription');
+        const currentMode = document.getElementById('currentMode');
+        const exampleOffline = document.getElementById('exampleOffline');
+        const example2pass = document.getElementById('example2pass');
+        const exampleOnline = document.getElementById('exampleOnline');
+
+        // 模式描述
+        const modeDescriptions = {
+            offline: '离线模式：录音结束后一次性识别，适合对准确率要求高的场景，如音频文件转写',
+            '2pass': '两遍模式：第一遍实时返回结果，第二遍离线精修，兼顾实时性和准确率，适合会议记录、直播字幕',
+            online: '实时模式：边说边识别，实时性好，适合实时字幕、语音输入法等需要即时反馈的场景'
+        };
+
+        // 模式名称映射
+        const modeNames = {
+            offline: 'offline (离线模式)',
+            '2pass': '2pass (两遍模式)',
+            online: 'online (实时模式)'
+        };
+
+        // 当前识别模式
+        let currentModeValue = 'offline';
+        let asr = null;
+
+        // 初始化 SDK 实例
+        function initASR(mode = 'offline') {
+            // 销毁旧实例
+            if (asr) {
+                asr.destroy();
+            }
+
+            // 创建新实例
+            asr = new FunASRController({
+                wsUrl: 'ws://127.0.0.1:10095/',
+                mode: mode,
+                itn: true
+            });
+
+            // 绑定事件
+            bindEvents();
+
+            console.log(`[FunASR] SDK 已初始化，当前模式: ${mode}`);
+        }
+
+        // 绑定事件
+        function bindEvents() {
+            // 绑定识别结果事件 - 实时识别结果
+            asr.onResult((result) => {
+                console.log('[ASR Result]', result);
+                const text = result.fullText || result.text || '';
+                if (text) {
+                    updateResult(text);
+                }
+                
+                // offline 模式下，收到结果后更新状态为识别完成
+                // 因为 offline 模式的结果是在录音结束后一次性返回的
+                if (currentModeValue === 'offline' && result.isFinal) {
+                    updateStatus('识别完成', 'connected');
+                    startBtn.disabled = false;
+                    stopBtn.disabled = true;
+                }
+            });
+
+            // 绑定识别完成事件
+            asr.onComplete((result) => {
+                console.log('[ASR Complete]', result);
+                const text = result.fullText || result.text || '';
+                updateResult(text || '识别完成，无文字内容');
+                updateStatus('识别完成', 'connected');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            });
+
+            // 绑定错误事件
+            asr.onError((error) => {
+                console.error('[ASR Error]', error);
+                showError('识别错误: ' + (error.message || '未知错误'));
+                updateStatus('发生错误', 'error');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            });
+
+            // 绑定录音开始事件
+            asr.onStart(() => {
+                console.log('[ASR] 录音开始');
+                updateStatus('正在录音...', 'recording');
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                updateResult('正在识别中...', true);
+            });
+
+            // 绑定录音停止事件
+            asr.onStop(() => {
+                console.log('[ASR] 录音停止');
+                // online 模式下录音停止后立即显示准备就绪
+                // 因为 online 模式的结果已经在 onResult 中实时返回了
+                if (currentModeValue === 'online') {
+                    updateStatus('准备就绪');
+                    startBtn.disabled = false;
+                    stopBtn.disabled = true;
+                } else {
+                    updateStatus('处理中...', 'connected');
+                }
+            });
+
+            // 绑定连接中事件
+            asr.onConnecting(() => {
+                console.log('[ASR] 连接中...');
+                updateStatus('正在连接服务器...', '');
+            });
+
+            // 绑定连接成功事件
+            asr.onConnected(() => {
+                console.log('[ASR] 已连接');
+                updateStatus('已连接', 'connected');
+            });
+
+            // 绑定连接断开事件
+            asr.onDisconnected(() => {
+                console.log('[ASR] 连接断开');
+                updateStatus('连接已断开', '');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            });
+        }
+
+        // 更新示例显示
+        function updateExample(mode) {
+            exampleOffline.style.display = 'none';
+            example2pass.style.display = 'none';
+            exampleOnline.style.display = 'none';
+
+            if (mode === 'offline') {
+                exampleOffline.style.display = 'block';
+            } else if (mode === '2pass') {
+                example2pass.style.display = 'block';
+            } else if (mode === 'online') {
+                exampleOnline.style.display = 'block';
+            }
+        }
+
+        // 初始化 SDK
+        initASR('offline');
+
+        // 更新状态显示
+        function updateStatus(message, type = '') {
+            statusBar.textContent = message;
+            statusBar.className = 'status-bar' + (type ? ' ' + type : '');
+        }
+
+        // 显示错误信息
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.classList.add('show');
+            setTimeout(() => {
+                errorMessage.classList.remove('show');
+            }, 5000);
+        }
+
+        // 更新结果文本
+        function updateResult(text, isPlaceholder = false) {
+            resultText.textContent = text;
+            if (isPlaceholder) {
+                resultText.classList.add('placeholder');
+            } else {
+                resultText.classList.remove('placeholder');
+            }
+        }
+
+        // 模式切换事件
+        modeSelect.addEventListener('change', (e) => {
+            const selectedMode = e.target.value;
+            currentModeValue = selectedMode;
+
+            // 更新描述
+            modeDescription.textContent = modeDescriptions[selectedMode];
+
+            // 更新当前模式显示
+            currentMode.textContent = modeNames[selectedMode];
+
+            // 更新示例代码显示
+            updateExample(selectedMode);
+
+            // 重新初始化 SDK
+            initASR(selectedMode);
+            updateStatus('准备就绪');
+            updateResult('识别内容将显示在这里...', true);
+
+            console.log(`[FunASR] 切换到 ${selectedMode} 模式`);
+        });
+
+        // 开始录音按钮点击事件
+        startBtn.addEventListener('click', async () => {
+            try {
+                console.log('[FunASR] 开始录音');
+                await asr.startRecording();
+            } catch (error) {
+                console.error('[FunASR] 开始录音失败:', error);
+                showError('启动失败: ' + (error.message || '请检查麦克风权限'));
+                updateStatus('启动失败', 'error');
+            }
+        });
+
+        // 停止录音按钮点击事件
+        stopBtn.addEventListener('click', async () => {
+            try {
+                console.log('[FunASR] 停止录音');
+                await asr.stopRecording();
+            } catch (error) {
+                console.error('[FunASR] 停止录音失败:', error);
+                showError('停止失败: ' + (error.message || '未知错误'));
+            }
+        });
+
+        // 页面卸载时清理资源
+        window.addEventListener('beforeunload', () => {
+            if (asr) {
+                asr.destroy();
+            }
+        });
+
+        console.log('[FunASR] SDK 初始化完成，等待用户操作...');
+    </script>
+</body>
+</html>
