@@ -293,7 +293,7 @@
         <div class="config-panel">
             <div class="config-item">
                 <span class="config-label">服务器地址:</span>
-                <span class="config-value">ws://192.168.1.17:10095/</span>
+                <span class="config-value">ws://127.0.0.1:10095/</span>
             </div>
             <div class="config-item">
                 <span class="config-label">当前模式:</span>
@@ -306,7 +306,7 @@
             <div class="example-title">💡 2pass 模式代码示例</div>
             <div class="example-code">// 2pass 模式：实时识别 + 离线精修
 const asr = new FunASRController({
-    wsUrl: 'ws://192.168.1.17:10095/',
+    wsUrl: 'ws://127.0.0.1:10095/',
     mode: '2pass',        // 两遍模式
     itn: true,            // 启用逆文本标准化
     chunkSize: [5, 10, 5] // 音频分片配置
@@ -332,7 +332,7 @@ asr.onComplete((result) => {
             <div class="example-title">💡 online 模式代码示例</div>
             <div class="example-code">// online 模式：实时流式识别
 const asr = new FunASRController({
-    wsUrl: 'ws://192.168.1.17:10095/',
+    wsUrl: 'ws://127.0.0.1:10095/',
     mode: 'online',       // 实时模式
     itn: true,            // 启用逆文本标准化
     chunkInterval: 10     // 每10ms发送一次音频数据
@@ -357,7 +357,7 @@ asr.onComplete((result) => {
             <div class="example-title">💡 offline 模式代码示例</div>
             <div class="example-code">// offline 模式：录音结束后一次性识别
 const asr = new FunASRController({
-    wsUrl: 'ws://192.168.1.17:10095/',
+    wsUrl: 'ws://127.0.0.1:10095/',
     mode: 'offline',      // 离线模式
     itn: true             // 启用逆文本标准化
 });
@@ -376,12 +376,8 @@ asr.onComplete((result) => {
         <div class="error-message" id="errorMessage"></div>
     </div>
 
-    <!-- 引入 SDK 核心模块 -->
-    <script src="static/js/stateManager.js"></script>
-    <script src="static/js/errorHandler.js"></script>
-    <script src="static/js/wsClient.js"></script>
-    <script src="static/js/audioRecorder.js"></script>
-    <script src="static/js/app.js"></script>
+    <!-- 引入 FunASR SDK（合并版） -->
+    <script src="static/js/funasr-sdk.js"></script>
 
     <script>
         // DOM 元素
@@ -424,7 +420,7 @@ asr.onComplete((result) => {
 
             // 创建新实例
             asr = new FunASRController({
-                wsUrl: 'ws://192.168.1.17:10095/',
+                wsUrl: 'ws://127.0.0.1:10095/',
                 mode: mode,
                 itn: true
             });

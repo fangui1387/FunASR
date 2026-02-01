@@ -22,7 +22,7 @@
 
     // 默认配置
     const DEFAULT_CONFIG = {
-        url: 'wss://192.168.1.17:10095/',
+        url: 'wss://127.0.0.1:10095/',
         mode: 'offline',
         wavName: 'h5_recording',
         wavFormat: 'pcm',

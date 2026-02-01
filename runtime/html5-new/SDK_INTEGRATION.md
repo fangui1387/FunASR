@@ -8,17 +8,14 @@ FunASR Web SDK 提供了在 H5 页面中实现语音识别功能的能力，支�
 
 ### 1. 引入必要文件
 
-在 HTML 文件的 `<head>` 或 `<body>` 底部引入以下文件：
+在 HTML 文件的 `<head>` 或 `<body>` 底部引入 SDK 文件：
 
 ```html
-
-<!-- SDK 核心模块 -->
-<script src="path/to/funasr/js/stateManager.js"></script>
-<script src="path/to/funasr/js/errorHandler.js"></script>
-<script src="path/to/funasr/js/wsClient.js"></script>
-<script src="path/to/funasr/js/audioRecorder.js"></script>
-<script src="path/to/funasr/js/app.js"></script>
+<!-- SDK 核心模块（合并版） -->
+<script src="path/to/funasr/js/funasr-sdk.js"></script>
 ```
+
+> **注意**：`funasr-sdk.js` 是合并后的单一文件，包含了 `stateManager.js`、`errorHandler.js`、`wsClient.js`、`audioRecorder.js` 和 `app.js` 的所有功能。
 
 ### 2. 创建 UI 元素
 
@@ -36,7 +33,7 @@ FunASR Web SDK 提供了在 H5 页面中实现语音识别功能的能力，支�
 ```javascript
 // 创建 SDK 实例
 const asr = new FunASRController({
-    wsUrl: 'ws://192.168.1.17:10095/',  // WebSocket服务器地址
+    wsUrl: 'ws://127.0.0.1:10095/',  // WebSocket服务器地址
     mode: '2pass',                       // 识别模式: offline | online | 2pass
     itn: true                            // 是否启用逆文本标准化
 });
@@ -85,7 +82,7 @@ const asr = new FunASRController(options);
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| wsUrl | string | 'ws://192.168.1.17:10095/' | WebSocket 服务器地址 |
+| wsUrl | string | 'ws://127.0.0.1:10095/' | WebSocket 服务器地址 |
 | mode | string | 'offline' | 识别模式：'offline'、'online'、'2pass' |
 | itn | boolean | true | 是否启用逆文本标准化 |
 | hotwords | string | null | 热词配置 |
@@ -296,7 +293,7 @@ asr.setMode('online');
 设置 WebSocket 地址。
 
 ```javascript
-asr.setUrl('ws://192.168.1.17:10095/');
+asr.setUrl('ws://127.0.0.1:10095/');
 ```
 
 ##### updateConfig(config)
@@ -427,12 +424,8 @@ asr.destroy();
         <div class="result" id="result">识别结果将显示在这里...</div>
     </div>
 
-    <!-- 引入 SDK -->
-    <script src="path/to/funasr/js/stateManager.js"></script>
-    <script src="path/to/funasr/js/errorHandler.js"></script>
-    <script src="path/to/funasr/js/wsClient.js"></script>
-    <script src="path/to/funasr/js/audioRecorder.js"></script>
-    <script src="path/to/funasr/js/app.js"></script>
+    <!-- 引入 SDK（合并版） -->
+    <script src="path/to/funasr/js/funasr-sdk.js"></script>
 
     <script>
         // DOM 元素
@@ -443,7 +436,7 @@ asr.destroy();
 
         // 创建 SDK 实例
         const asr = new FunASRController({
-            wsUrl: 'ws://192.168.1.17:10095/',
+            wsUrl: 'ws://127.0.0.1:10095/',
             mode: 'offline'
         });
 

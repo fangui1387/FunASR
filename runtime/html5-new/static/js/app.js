@@ -4,7 +4,7 @@
  * 
  * 使用示例:
  * const asr = new FunASRController({
- *     wsUrl: 'ws://192.168.1.17:10095/',
+ *     wsUrl: 'ws://127.0.0.1:10095/',
  *     mode: '2pass',
  *     itn: true
  * });
@@ -19,7 +19,7 @@
 
     // 默认配置
     const DEFAULT_CONFIG = {
-        wsUrl: 'ws://192.168.1.17:10095/',
+        wsUrl: 'ws://127.0.0.1:10095/',
         mode: 'offline',
         wavName: 'h5_recording',
         wavFormat: 'pcm',
