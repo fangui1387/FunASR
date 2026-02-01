@@ -444,7 +444,7 @@ asr.destroy();
         // 创建 SDK 实例
         const asr = new FunASRController({
             wsUrl: 'ws://192.168.1.17:10095/',
-            mode: '2pass'
+            mode: 'offline'
         });
 
         // 事件绑定

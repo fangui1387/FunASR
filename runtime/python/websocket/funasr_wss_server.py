@@ -138,11 +138,13 @@ async def process_asr_offline(websocket, audio_in):
     
     if len(rec_result.get("text", "")) > 0:
         mode = "2pass-offline" if "2pass" in websocket.mode else websocket.mode
+        # offline 模式下，结果总是最终的
+        is_final = True if websocket.mode == "offline" else websocket.is_speaking
         message = json.dumps({
             "mode": mode,
             "text": rec_result["text"],
             "wav_name": websocket.wav_name,
-            "is_final": websocket.is_speaking,
+            "is_final": is_final,
         })
         await websocket.send(message)
 
