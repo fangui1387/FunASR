@@ -383,14 +383,14 @@ asr.onComplete((result) => {
     <script>
         // vConsole 是移动端调试工具，仅在开发环境启用
         // 生产环境建议移除或禁用
-        const isDevEnvironment = location.hostname === 'localhost' ||
-                                 location.hostname === '127.0.0.1' ||
-                                 location.search.includes('debug=true');
-        let vConsole = null;
-        if (isDevEnvironment) {
+        // const isDevEnvironment = location.hostname === 'localhost' ||
+        //                          location.hostname === '127.0.0.1' ||
+        //                          location.search.includes('debug=true');
+        // let vConsole = null;
+        // if (isDevEnvironment) {
             vConsole = new VConsole();
-            console.log('[FunASR] 开发环境已启用vConsole调试');
-        }
+        //     console.log('[FunASR] 开发环境已启用vConsole调试');
+        // }
         
         // DOM 元素
         const startBtn = document.getElementById('startBtn');
@@ -430,9 +430,14 @@ asr.onComplete((result) => {
                 asr.destroy();
             }
 
+            // WebSocket 地址（已包含所有查询参数）
+            //const wsUrl = 'wss://ifm.service.ccb.com/ai-service/aiwsasr/asr?Tx-Code=A4102AU14&X-Sec-Node-No=400136&Trace-Id=123456&Tx-Serial-No=0001&Access_Token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJBY2Nlc3NfS2V5X0lkIjoiMTIxMDI1NDM2NjM1MTU3Mjk5MiIsInR5cGUiOiJhaV9nd19hY2Nlc3NfdG9rZW4iLCJleHAiOjE3NzI2MTI4MDgsInVzZXJuYW1lIjoibGl5aW5naHVpMS56aCJ9.lKvPnJTdsUr29BfbHCgh4IvNNJcQeEhbEYI8dGH8sCg&q2h=abc';
+            const wsUrl = 'ws://192.168.43.12:10095/';
+            // const wsUrl = 'ws://43.138.5.20:10096/';
+
             // 创建新实例
             asr = new FunASRController({
-                wsUrl: 'ws://127.0.0.1:10095/',
+                wsUrl: wsUrl,
                 mode: mode,
                 itn: true
             });
