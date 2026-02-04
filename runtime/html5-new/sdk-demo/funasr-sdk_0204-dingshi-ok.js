@@ -1354,16 +1354,16 @@
     // 默认配置
     const DEFAULT_CONFIG = {
         url: 'wss://127.0.0.1:10095/',
-        mode: 'offline',
+        mode: 'offline',      // 默认使用离线文件转写模式
         wavName: 'h5_recording',
         wavFormat: 'pcm',
         audioFs: 16000,
-        chunkSize: [5, 10, 5],
+        chunkSize: [5, 10, 5],  // 流式模型latency配置：[5,10,5]表示当前音频600ms，回看300ms，又看300ms
         chunkInterval: 10,
         itn: true,
         hotwords: null,
-        svsLang: 'auto',
-        svsItn: true,
+        svsLang: 'auto',        // SenseVoiceSmall模型语种，默认auto
+        svsItn: true,           // SenseVoiceSmall模型是否开启标点、ITN
         reconnectAttempts: 3,
         reconnectDelay: 3000,
         connectionTimeout: 10000,
@@ -1680,26 +1680,50 @@
                 return;
             }
 
+            // 确保 params 不为 null/undefined
+            params = params || {};
+
             try {
                 // 如果已连接，先断开
                 if (this.ws) {
                     this._cleanupWebSocket();
                 }
 
-                // 保存连接参数
-                this._connectionParams = {
-                    mode: params.mode || this.config.mode,
+                // 保存连接参数（遵循实时语音识别协议）
+                const mode = params.mode || this.config.mode;
+                const connectionParams = {
+                    mode: mode,
                     wav_name: params.wavName || this.config.wavName,
                     wav_format: params.wavFormat || this.config.wavFormat,
                     audio_fs: params.audioFs || this.config.audioFs,
                     is_speaking: true,
-                    chunk_size: this.config.chunkSize,
-                    chunk_interval: this.config.chunkInterval,
-                    itn: params.itn !== undefined ? params.itn : this.config.itn,
-                    hotwords: params.hotwords || this.config.hotwords,
-                    svs_lang: params.svsLang || this.config.svsLang,
-                    svs_itn: params.svsItn !== undefined ? params.svsItn : this.config.svsItn
+                    itn: params.itn !== undefined ? params.itn : this.config.itn
                 };
+                
+
+                // 实时语音识别模式(2pass/online)特有参数
+                if (mode === '2pass' || mode === 'online') {
+                    connectionParams.chunk_size = params.chunkSize || this.config.chunkSize;
+                    if (params.chunkInterval || this.config.chunkInterval) {
+                        connectionParams.chunk_interval = params.chunkInterval || this.config.chunkInterval;
+                    }
+                }
+
+                // 热词参数（如果使用）
+                const hotwords = params.hotwords || this.config.hotwords;
+                if (hotwords) {
+                    connectionParams.hotwords = typeof hotwords === 'object' ? JSON.stringify(hotwords) : hotwords;
+                }
+
+                // SenseVoiceSmall模型参数
+                if (params.svsLang || this.config.svsLang) {
+                    connectionParams.svs_lang = params.svsLang || this.config.svsLang;
+                }
+                if (params.svsItn !== undefined ? params.svsItn : this.config.svsItn) {
+                    connectionParams.svs_itn = params.svsItn !== undefined ? params.svsItn : this.config.svsItn;
+                }
+
+                this._connectionParams = connectionParams;
 
                 this.state = WSState.CONNECTING;
                 this._emit('connecting');
@@ -1812,6 +1836,7 @@
             
             // 如果正在连接过程中被关闭，reject Promise
             if (wasConnecting && this._connectReject) {
+                console.log('WSClient: Rejecting connect promise',event);
                 const error = new Error(`连接失败: ${event.reason || '连接被拒绝'}`);
                 this._connectReject(error);
                 this._connectResolve = null;
@@ -1907,6 +1932,7 @@
                 console.log('[WSClient Debug] 原始data:', JSON.stringify(data));
 
                 // 使用服务器返回的mode
+                // 实时语音识别模式：2pass-online（实时识别结果），2pass-offline（2遍修正识别结果）
                 const resultMode = data.mode || 'offline';
 
                 const result = {
@@ -1914,8 +1940,8 @@
                     wavName: data.wav_name,
                     text: data.text,
                     isFinal: data.is_final || false,
-                    timestamp: data.timestamp,
-                    stampSents: data.stamp_sents,
+                    timestamp: data.timestamp,      // 时间戳，格式："[[100,200], [200,500]]"(ms)
+                    stampSents: data.stamp_sents,   // 句子级别时间戳
                     receiveTime: Date.now()
                 };
 
@@ -1934,8 +1960,10 @@
 
                 // 判断是否为最终结果（仅触发complete事件，不影响实时显示）：
                 // 1. mode 为 "2pass-offline"（2pass模式的第二遍离线精识别结果）
+                // 2. mode 为 "offline" 且 is_final 为 true
                 // 注意：不依赖 is_final，因为服务器可能在2pass-online模式下也设置is_final
-                const isComplete = result.mode === '2pass-offline';
+                const isComplete = result.mode === '2pass-offline' ||
+                                   (result.mode === 'offline' && result.isFinal);
 
                 if (isComplete) {
                     console.log('[WSClient Debug] 触发 complete 事件');
@@ -2331,7 +2359,7 @@
         sampleRate: 16000,
         bufferSize: 4096,
         chunkDuration: 100, // 每个数据块的时长(ms)
-        maxDuration: 600000  // 最大录音时长(ms) 10分钟
+        maxDuration: 60000  // 最大录音时长(ms) 60秒
     };
 
     // 录音状态枚举
@@ -2422,8 +2450,8 @@
             }
 
             if (typeof this.config.maxDuration !== 'number' || this.config.maxDuration <= 0) {
-                console.warn('AudioRecorder: Invalid maxDuration, using default 600000');
-                this.config.maxDuration = 600000;
+                console.warn('AudioRecorder: Invalid maxDuration, using default 60000');
+                this.config.maxDuration = 60000;
             }
         }
 
@@ -3041,15 +3069,16 @@
     // 默认配置
     const DEFAULT_CONFIG = {
         wsUrl: 'ws://127.0.0.1:10095/',
-        mode: 'offline',
+        mode: 'offline',      // 默认使用离线文件转写模式
         wavName: 'h5_recording',
         wavFormat: 'pcm',
         audioFs: 16000,
+        chunkSize: [5, 10, 5],  // 流式模型latency配置
         itn: true,
         hotwords: null,
-        svsLang: 'auto',
-        svsItn: true,
-        maxDuration: 60000  // 默认最大录音时长60秒
+        svsLang: 'auto',        // SenseVoiceSmall模型语种
+        svsItn: true,           // SenseVoiceSmall模型是否开启标点、ITN
+        maxDuration: 60000       // 默认最大录音时长60秒
     };
 
     /**
@@ -3440,9 +3469,7 @@
                 wavFormat: params.wavFormat || this.config.wavFormat,
                 audioFs: params.audioFs || this.config.audioFs,
                 itn: params.itn !== undefined ? params.itn : this.config.itn,
-                hotwords: params.hotwords || this.config.hotwords,
-                svsLang: params.svsLang || this.config.svsLang,
-                svsItn: params.svsItn !== undefined ? params.svsItn : this.config.svsItn
+                hotwords: params.hotwords || this.config.hotwords
             };
 
             try {
@@ -3472,7 +3499,7 @@
                 if (this._initPromise) {
                     await this._initPromise;
                 }
-                
+
                 if (!this.stateManager.isReady && !this.stateManager.isConnected) {
                      // 允许在未连接状态下调用，下面会尝试连接
                 } else if (this.stateManager.appState === AppState.ERROR) {
@@ -3493,18 +3520,35 @@
                     await this.connect(params);
                 }
 
-                // 发送配置参数
+                // 发送配置参数（遵循实时语音识别协议）
                 const configMessage = {
                     mode: this.config.mode,
                     wav_name: this.config.wavName,
                     wav_format: this.config.wavFormat,
                     audio_fs: this.config.audioFs,
                     is_speaking: true,
-                    itn: this.config.itn,
-                    hotwords: this.config.hotwords,
-                    svs_lang: this.config.svsLang,
-                    svs_itn: this.config.svsItn
+                    itn: this.config.itn
                 };
+
+                // 实时语音识别模式(2pass/online)特有参数
+                if (this.config.mode === '2pass' || this.config.mode === 'online') {
+                    configMessage.chunk_size = this.config.chunkSize;
+                }
+
+                // 热词参数（如果使用）
+                if (this.config.hotwords) {
+                    configMessage.hotwords = typeof this.config.hotwords === 'object'
+                        ? JSON.stringify(this.config.hotwords)
+                        : this.config.hotwords;
+                }
+
+                // SenseVoiceSmall模型参数
+                if (this.config.svsLang) {
+                    configMessage.svs_lang = this.config.svsLang;
+                }
+                if (this.config.svsItn !== undefined) {
+                    configMessage.svs_itn = this.config.svsItn;
+                }
 
                 const sent = this.wsClient._sendJson(configMessage);
                 if (!sent) {
