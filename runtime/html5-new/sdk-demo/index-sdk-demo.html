@@ -270,7 +270,7 @@
                 <option value="online">online - 实时模式（边说边识别，实时性好）</option>
             </select>
             <div class="mode-description" id="modeDescription">
-                离线模式：录音结束后一次性识别，适合对准确率要求高的场景
+                离线模式：录音结束后一次性识别，适合对准确率要求高的场景，如音频文件转写
             </div>
         </div>
 
@@ -301,6 +301,28 @@
             </div>
         </div>
 
+        <!-- offline 模式示例 -->
+        <div class="example-section" id="exampleOffline">
+            <div class="example-title">💡 offline 模式代码示例（默认）</div>
+            <div class="example-code">// offline 模式：录音结束后一次性识别
+const asr = new FunASRController({
+    wsUrl: 'ws://127.0.0.1:10095/',
+    mode: 'offline',      // 离线模式
+    itn: true             // 启用逆文本标准化
+});
+
+// 识别结果（仅在录音结束后返回）
+asr.onResult((result) => {
+    console.log('识别文本:', result.text);
+    console.log('时间戳:', result.timestamp);
+});
+
+// 识别完成
+asr.onComplete((result) => {
+    console.log('最终识别结果:', result.fullText);
+});</div>
+        </div>
+
         <!-- 2pass 模式示例 -->
         <div class="example-section" id="example2pass" style="display: none;">
             <div class="example-title">💡 2pass 模式代码示例</div>
@@ -309,7 +331,7 @@ const asr = new FunASRController({
     wsUrl: 'ws://127.0.0.1:10095/',
     mode: '2pass',        // 两遍模式
     itn: true,            // 启用逆文本标准化
-    chunkSize: [5, 10, 5] // 音频分片配置
+    chunkSize: [5, 10, 5] // 音频分片配置 [5,10,5]表示当前音频600ms，回看300ms，又看300ms
 });
 
 // 实时结果（第一遍）
@@ -319,9 +341,11 @@ asr.onResult((result) => {
     console.log('识别模式:', result.mode);
     console.log('实时文本:', result.text);
     console.log('完整文本:', result.fullText);
+    console.log('时间戳:', result.timestamp);    // [[100,200], [200,500]] (ms)
+    console.log('句子时间戳:', result.stampSents); // 句子级别时间戳
 });
 
-// 识别完成
+// 识别完成（收到 2pass-offline 结果时触发）
 asr.onComplete((result) => {
     console.log('最终精修结果:', result.fullText);
 });</div>
@@ -335,7 +359,7 @@ const asr = new FunASRController({
     wsUrl: 'ws://127.0.0.1:10095/',
     mode: 'online',       // 实时模式
     itn: true,            // 启用逆文本标准化
-    chunkInterval: 10     // 每10ms发送一次音频数据
+    chunkSize: [5, 10, 5] // 音频分片配置
 });
 
 // 实时识别结果
@@ -349,27 +373,6 @@ asr.onResult((result) => {
 // 识别完成
 asr.onComplete((result) => {
     console.log('识别完成:', result.fullText);
-});</div>
-        </div>
-
-        <!-- offline 模式示例 -->
-        <div class="example-section" id="exampleOffline">
-            <div class="example-title">💡 offline 模式代码示例</div>
-            <div class="example-code">// offline 模式：录音结束后一次性识别
-const asr = new FunASRController({
-    wsUrl: 'ws://127.0.0.1:10095/',
-    mode: 'offline',      // 离线模式
-    itn: true             // 启用逆文本标准化
-});
-
-// 识别结果（仅在录音结束后返回）
-asr.onResult((result) => {
-    console.log('识别文本:', result.text);
-});
-
-// 识别完成
-asr.onComplete((result) => {
-    console.log('最终识别结果:', result.fullText);
 });</div>
         </div>
 
@@ -419,7 +422,7 @@ asr.onComplete((result) => {
             online: 'online (实时模式)'
         };
 
-        // 当前识别模式
+        // 当前识别模式（默认使用离线文件转写 offline 模式）
         let currentModeValue = 'offline';
         let asr = null;
 
@@ -439,7 +442,8 @@ asr.onComplete((result) => {
             asr = new FunASRController({
                 wsUrl: wsUrl,
                 mode: mode,
-                itn: true
+                itn: true,
+                maxDuration: 60000    //默认是60s
             });
 
             // 绑定事件
@@ -545,7 +549,7 @@ asr.onComplete((result) => {
             }
         }
 
-        // 初始化 SDK
+        // 初始化 SDK（默认使用 offline 离线文件转写模式）
         initASR('offline');
 
         // 更新状态显示
