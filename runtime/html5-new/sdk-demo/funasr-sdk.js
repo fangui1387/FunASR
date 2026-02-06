@@ -1680,6 +1680,9 @@
                 return;
             }
 
+            // 确保 params 不为 null/undefined
+            params = params || {};
+
             try {
                 // 如果已连接，先断开
                 if (this.ws) {
@@ -1933,9 +1936,10 @@
                 this._emit('result', result);
 
                 // 判断是否为最终结果（仅触发complete事件，不影响实时显示）：
-                // 1. mode 为 "2pass-offline"（2pass模式的第二遍离线精识别结果）
-                // 注意：不依赖 is_final，因为服务器可能在2pass-online模式下也设置is_final
-                const isComplete = result.mode === '2pass-offline';
+                // 必须同时满足：1. isFinal 为 true；2. mode 为 "2pass-offline" 或 "offline"
+                // isFinal 表示服务器确认这是最终结果，mode 用于区分识别模式
+                const isComplete = result.isFinal === true && 
+                                   (result.mode === '2pass-offline' || result.mode === 'offline');
 
                 if (isComplete) {
                     console.log('[WSClient Debug] 触发 complete 事件');
@@ -2591,10 +2595,32 @@
                         this.state = RecorderState.ERROR;
                         this._initializing = false;
                         
-                        const error = new Error(err.message || '无法访问麦克风');
-                        error.isUserNotAllow = err.name === 'NotAllowedError';
+                        // 构建详细的权限错误信息
+                        let errorMessage = '无法访问麦克风';
+                        let errorCode = 'PERMISSION_DENIED';
+                        
+                        if (err.name === 'NotAllowedError' || err.message?.includes('Permission denied')) {
+                            errorMessage = '用户拒绝了麦克风权限，请在浏览器设置中允许访问麦克风';
+                            errorCode = 'PERMISSION_DENIED';
+                        } else if (err.name === 'NotFoundError') {
+                            errorMessage = '未找到麦克风设备，请检查设备是否连接';
+                            errorCode = 'DEVICE_NOT_FOUND';
+                        } else if (err.name === 'NotReadableError') {
+                            errorMessage = '麦克风被其他应用占用，请关闭其他使用麦克风的应用';
+                            errorCode = 'DEVICE_IN_USE';
+                        } else if (err.name === 'SecurityError') {
+                            errorMessage = '当前环境不支持录音功能，请使用HTTPS或localhost访问';
+                            errorCode = 'SECURITY_ERROR';
+                        }
+                        
+                        const error = new Error(errorMessage);
+                        error.code = errorCode;
+                        error.name = err.name;
+                        error.originalError = err;
+                        error.isUserNotAllow = err.name === 'NotAllowedError' || err.message?.includes('Permission denied');
                         error.isNotFound = err.name === 'NotFoundError';
                         error.isNotReadable = err.name === 'NotReadableError';
+                        error.isSecurityError = err.name === 'SecurityError';
                         
                         this._emit('error', error);
                         reject(error);
@@ -3307,27 +3333,27 @@
                 }
 
                 const newText = result.text || '';
-                const mode = result.mode || '';
-                const isSentenceEnd = mode === '2pass-offline';
+                const isFinal = result.isFinal || false;
 
                 // 更新当前文本
                 this.currentText = newText;
 
-                // 2pass/online模式：处理多句识别
-                if (this.config.mode === '2pass' || this.config.mode === 'online') {
-                    if (isSentenceEnd) {
-                        this.completedSentences.push(newText);
-                        if (this.completedSentences.length > this._maxSentencesSize) {
-                            this.completedSentences = this.completedSentences.slice(-this._maxSentencesSize);
-                        }
-                        this.currentSentence = '';
-                    } else {
-                        this.currentSentence += newText;
+                // 基于isFinal字段的拼接逻辑（所有模式统一处理）
+                // isFinal=false: 持续将text内容拼接到当前段落
+                // isFinal=true: 完成当前段落拼接，包含该text内容
+                if (isFinal) {
+                    // isFinal=true: 完成当前段落，将当前句子加入已完成句子列表
+                    this.currentSentence += newText;
+                    this.completedSentences.push(this.currentSentence);
+                    if (this.completedSentences.length > this._maxSentencesSize) {
+                        this.completedSentences = this.completedSentences.slice(-this._maxSentencesSize);
                     }
-                    result.fullText = this.completedSentences.join('') + this.currentSentence;
+                    this.currentSentence = '';
                 } else {
-                    result.fullText = newText;
+                    // isFinal=false: 持续拼接text内容到当前段落
+                    this.currentSentence += newText;
                 }
+                result.fullText = this.completedSentences.join('') + this.currentSentence;
 
                 this._emit('result', result);
             } catch (error) {
@@ -3472,7 +3498,7 @@
                 if (this._initPromise) {
                     await this._initPromise;
                 }
-                
+
                 if (!this.stateManager.isReady && !this.stateManager.isConnected) {
                      // 允许在未连接状态下调用，下面会尝试连接
                 } else if (this.stateManager.appState === AppState.ERROR) {
@@ -3486,6 +3512,23 @@
 
                 if (!this.wsClient || !this.audioRecorder) {
                     throw new Error('核心模块未初始化');
+                }
+
+                // 先尝试初始化录音器（请求权限），确保权限获取成功后再连接服务器
+                // 这样可以避免权限被拒绝时已经建立了WebSocket连接
+                try {
+                    if (!this.audioRecorder.audioContext) {
+                        await this.audioRecorder.init();
+                    }
+                } catch (permissionError) {
+                    // 权限被拒绝，构建明确的错误信息并终止流程
+                    const error = new Error('录音权限被拒绝：用户拒绝了麦克风权限，请在浏览器设置中允许访问麦克风');
+                    error.code = 'PERMISSION_DENIED';
+                    error.type = 'permission_denied';
+                    error.originalError = permissionError;
+                    error.isUserNotAllow = true;
+                    this.errorHandler.handle(error, { phase: 'startRecording' });
+                    throw error;
                 }
 
                 // 如果未连接，先连接
@@ -3519,6 +3562,15 @@
                 // 开始录音
                 await this.audioRecorder.start();
             } catch (error) {
+                // 处理权限拒绝错误，确保错误信息明确
+                if (error.isUserNotAllow || error.code === 'PERMISSION_DENIED') {
+                    const permissionError = new Error('录音权限被拒绝：用户拒绝了麦克风权限，请在浏览器设置中允许访问麦克风');
+                    permissionError.code = 'PERMISSION_DENIED';
+                    permissionError.type = 'permission_denied';
+                    permissionError.originalError = error;
+                    this.errorHandler.handle(permissionError, { phase: 'startRecording' });
+                    throw permissionError;
+                }
                 this.errorHandler.handle(error, { phase: 'startRecording' });
                 throw error;
             }

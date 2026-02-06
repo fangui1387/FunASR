@@ -457,14 +457,15 @@ asr.onComplete((result) => {
             // 绑定识别结果事件 - 实时识别结果
             asr.onResult((result) => {
                 console.log('[ASR Result]', result);
-                const text = result.fullText || result.text || '';
-                if (text) {
-                    updateResult(text);
+                
+                // 直接使用 SDK 返回的 fullText，避免重复拼接
+                const fullDisplayText = result.fullText || result.text || '';
+                if (fullDisplayText) {
+                    updateResult(fullDisplayText);
                 }
                 
-                // offline 模式下，收到结果后更新状态为识别完成
-                // 因为 offline 模式的结果是在录音结束后一次性返回的
-                if (currentModeValue === 'offline' && result.isFinal) {
+                // 识别完成时更新状态
+                if (result.isFinal) {
                     updateStatus('识别完成', 'connected');
                     startBtn.disabled = false;
                     stopBtn.disabled = true;
@@ -484,7 +485,25 @@ asr.onComplete((result) => {
             // 绑定错误事件
             asr.onError((error) => {
                 console.error('[ASR Error]', error);
-                showError('识别错误: ' + (error.message || '未知错误'));
+                
+                // 根据错误类型显示不同的提示信息
+                let errorMsg = '识别错误: ' + (error.message || '未知错误');
+                
+                if (error.code === 'PERMISSION_DENIED' || error.type === 'permission_denied') {
+                    errorMsg = '录音权限被拒绝，请在浏览器设置中允许访问麦克风';
+                } else if (error.code === 'DEVICE_NOT_FOUND') {
+                    errorMsg = '未找到麦克风设备，请检查设备是否连接';
+                } else if (error.code === 'DEVICE_IN_USE') {
+                    errorMsg = '麦克风被其他应用占用，请关闭其他使用麦克风的应用';
+                } else if (error.code === 'SECURITY_ERROR') {
+                    errorMsg = '当前环境不支持录音，请使用HTTPS或localhost访问';
+                } else if (error.code === 'NETWORK_ERROR') {
+                    errorMsg = '网络连接失败，请检查网络设置';
+                } else if (error.code === 'CONNECTION_TIMEOUT') {
+                    errorMsg = '连接服务器超时，请稍后重试';
+                }
+                
+                showError(errorMsg);
                 updateStatus('发生错误', 'error');
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
@@ -606,7 +625,25 @@ asr.onComplete((result) => {
                 await asr.startRecording();
             } catch (error) {
                 console.error('[FunASR] 开始录音失败:', error);
-                showError('启动失败: ' + (error.message || '请检查麦克风权限'));
+                
+                // 根据错误类型显示不同的提示信息
+                let errorMsg = '启动失败: ' + (error.message || '请检查麦克风权限');
+                
+                if (error.code === 'PERMISSION_DENIED' || error.type === 'permission_denied') {
+                    errorMsg = '录音权限被拒绝，请在浏览器设置中允许访问麦克风';
+                } else if (error.code === 'DEVICE_NOT_FOUND') {
+                    errorMsg = '未找到麦克风设备，请检查设备是否连接';
+                } else if (error.code === 'DEVICE_IN_USE') {
+                    errorMsg = '麦克风被其他应用占用，请关闭其他使用麦克风的应用';
+                } else if (error.code === 'SECURITY_ERROR') {
+                    errorMsg = '当前环境不支持录音，请使用HTTPS或localhost访问';
+                } else if (error.code === 'NETWORK_ERROR') {
+                    errorMsg = '网络连接失败，请检查网络设置';
+                } else if (error.code === 'CONNECTION_TIMEOUT') {
+                    errorMsg = '连接服务器超时，请稍后重试';
+                }
+                
+                showError(errorMsg);
                 updateStatus('启动失败', 'error');
             }
         });
