@@ -2836,7 +2836,7 @@
 
             return new Promise((resolve, reject) => {
                 this.state = RecorderState.STOPPING;
-                
+
                 // 清除定时器
                 this._stopDurationTimer();
                 if (this._maxDurationTimer) {
@@ -2854,17 +2854,59 @@
                 try {
                     const duration = Date.now() - this.stats.startTime;
                     this.stats.duration = duration;
-                    
+
+                    // 停止媒体流轨道，彻底释放麦克风
+                    if (this.mediaStream) {
+                        try {
+                            this.mediaStream.getTracks().forEach(track => {
+                                track.stop();
+                                console.log('AudioRecorder: Media track stopped');
+                            });
+                        } catch (error) {
+                            console.error('AudioRecorder: Error stopping media stream:', error);
+                        }
+                        this.mediaStream = null;
+                    }
+
+                    // 断开音频节点
+                    if (this.scriptProcessor) {
+                        try {
+                            this.scriptProcessor.disconnect();
+                        } catch (error) {
+                            console.error('AudioRecorder: Error disconnecting script processor:', error);
+                        }
+                        this.scriptProcessor = null;
+                    }
+
+                    if (this.mediaStreamSource) {
+                        try {
+                            this.mediaStreamSource.disconnect();
+                        } catch (error) {
+                            console.error('AudioRecorder: Error disconnecting media stream source:', error);
+                        }
+                        this.mediaStreamSource = null;
+                    }
+
+                    // 关闭 AudioContext
+                    if (this.audioContext) {
+                        try {
+                            this.audioContext.close();
+                        } catch (error) {
+                            console.error('AudioRecorder: Error closing audio context:', error);
+                        }
+                        this.audioContext = null;
+                    }
+
                     this.state = RecorderState.IDLE;
-                    
+
                     console.log('AudioRecorder: Recording stopped, duration:', duration);
-                    
+
                     this._emit('stopped', {
                         blob: null,
                         duration: duration,
                         stats: { ...this.stats }
                     });
-                    
+
                     resolve({
                         blob: null,
                         duration: duration,
