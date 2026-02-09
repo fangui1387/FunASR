@@ -427,15 +427,17 @@ asr.onComplete((result) => {
         let asr = null;
 
         // 初始化 SDK 实例
-        function initASR(mode = 'offline') {
+        async function initASR(mode = 'offline') {
             // 销毁旧实例
             if (asr) {
                 asr.destroy();
+                asr = null;
             }
 
             // WebSocket 地址（已包含所有查询参数）
             //const wsUrl = 'wss://ifm.service.ccb.com/ai-service/aiwsasr/asr?Tx-Code=A4102AU14&X-Sec-Node-No=400136&Trace-Id=123456&Tx-Serial-No=0001&Access_Token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJBY2Nlc3NfS2V5X0lkIjoiMTIxMDI1NDM2NjM1MTU3Mjk5MiIsInR5cGUiOiJhaV9nd19hY2Nlc3NfdG9rZW4iLCJleHAiOjE3NzI2MTI4MDgsInVzZXJuYW1lIjoibGl5aW5naHVpMS56aCJ9.lKvPnJTdsUr29BfbHCgh4IvNNJcQeEhbEYI8dGH8sCg&q2h=abc';
-            const wsUrl = 'ws://192.168.43.12:10095/';
+            // const wsUrl = 'ws://192.168.43.12:10095/';
+            const wsUrl = 'ws://127.0.0.1:10095/';
             // const wsUrl = 'ws://43.138.5.20:10096/';
 
             // 创建新实例
@@ -446,10 +448,21 @@ asr.onComplete((result) => {
                 maxDuration: 60000    //默认是60s
             });
 
-            // 绑定事件
+            // 绑定事件（每次创建新实例都需要重新绑定）
             bindEvents();
 
-            console.log(`[FunASR] SDK 已初始化，当前模式: ${mode}`);
+            // 等待 SDK 初始化完成并自动连接
+            try {
+                console.log(`[FunASR] SDK 初始化中，当前模式: ${mode}`);
+                // 等待一小段时间确保 SDK 初始化完成
+                await new Promise(resolve => setTimeout(resolve, 500));
+                // 尝试连接服务器
+                await asr.connect();
+                console.log(`[FunASR] SDK 已初始化并连接，当前模式: ${mode}`);
+            } catch (error) {
+                console.error('[FunASR] SDK 初始化或连接失败:', error);
+                // 不阻止初始化，让用户可以手动重试连接
+            }
         }
 
         // 绑定事件
@@ -457,19 +470,14 @@ asr.onComplete((result) => {
             // 绑定识别结果事件 - 实时识别结果
             asr.onResult((result) => {
                 console.log('[ASR Result]', result);
-                
+
                 // 直接使用 SDK 返回的 fullText，避免重复拼接
                 const fullDisplayText = result.fullText || result.text || '';
                 if (fullDisplayText) {
                     updateResult(fullDisplayText);
                 }
-                
-                // 识别完成时更新状态
-                if (result.isFinal) {
-                    updateStatus('识别完成', 'connected');
-                    startBtn.disabled = false;
-                    stopBtn.disabled = true;
-                }
+
+                // 注意：识别完成状态在 onComplete 中处理，避免重复更新
             });
 
             // 绑定识别完成事件
@@ -490,16 +498,10 @@ asr.onComplete((result) => {
                 let errorMsg = '识别错误: ' + (error.message || '未知错误');
                 
                 if (error.code === 'PERMISSION_DENIED' || error.type === 'permission_denied') {
-                    errorMsg = '录音权限被拒绝，请在浏览器设置中允许访问麦克风';
-                } else if (error.code === 'DEVICE_NOT_FOUND') {
-                    errorMsg = '未找到麦克风设备，请检查设备是否连接';
-                } else if (error.code === 'DEVICE_IN_USE') {
-                    errorMsg = '麦克风被其他应用占用，请关闭其他使用麦克风的应用';
-                } else if (error.code === 'SECURITY_ERROR') {
-                    errorMsg = '当前环境不支持录音，请使用HTTPS或localhost访问';
-                } else if (error.code === 'NETWORK_ERROR') {
+                    errorMsg = '麦克风权限被拒绝，请在浏览器设置中允许访问麦克风';
+                } else if (error.code === 'NETWORK_ERROR' || error.type === 'network_error') {
                     errorMsg = '网络连接失败，请检查网络设置';
-                } else if (error.code === 'CONNECTION_TIMEOUT') {
+                } else if (error.code === 'CONNECTION_TIMEOUT' || error.type === 'connection_timeout') {
                     errorMsg = '连接服务器超时，请稍后重试';
                 }
                 
@@ -509,27 +511,20 @@ asr.onComplete((result) => {
                 stopBtn.disabled = true;
             });
 
-            // 绑定录音开始事件
+            // 绑定开始录音事件
             asr.onStart(() => {
-                console.log('[ASR] 录音开始');
+                console.log('[ASR] 开始录音');
                 updateStatus('正在录音...', 'recording');
                 startBtn.disabled = true;
                 stopBtn.disabled = false;
                 updateResult('正在识别中...', true);
             });
 
-            // 绑定录音停止事件
+            // 绑定停止录音事件
             asr.onStop(() => {
-                console.log('[ASR] 录音停止');
-                // online 模式下录音停止后立即显示准备就绪
-                // 因为 online 模式的结果已经在 onResult 中实时返回了
-                if (currentModeValue === 'online') {
-                    updateStatus('准备就绪');
-                    startBtn.disabled = false;
-                    stopBtn.disabled = true;
-                } else {
-                    updateStatus('处理中...', 'connected');
-                }
+                console.log('[ASR] 停止录音');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
             });
 
             // 绑定连接中事件
@@ -551,6 +546,104 @@ asr.onComplete((result) => {
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
             });
+
+            // 绑定网络错误事件
+            asr.onNetworkError((error) => {
+                console.error('[ASR Network Error]', error);
+
+                // 根据错误码显示不同的提示信息
+                let errorMsg = '网络错误: ' + (error.message || '网络连接异常');
+
+                // 根据错误码进行不同处理
+                switch (error.code) {
+                    case 'NETWORK_UNAVAILABLE':
+                        errorMsg = '网络连接不可用，请检查网络设置';
+                        break;
+                    case 'NETWORK_OFFLINE':
+                        errorMsg = '网络已断开，请检查网络设置';
+                        break;
+                    case 'CONNECTION_FAILED':
+                        errorMsg = '连接服务器失败，请稍后重试';
+                        break;
+                    case 'CONNECTION_DISCONNECTED':
+                        errorMsg = '连接已断开';
+                        break;
+                    case 'HEARTBEAT_TIMEOUT':
+                        errorMsg = '连接超时，请检查网络';
+                        break;
+                }
+
+                if (error.networkStatus) {
+                    console.log('[ASR] 网络状态:', error.networkStatus);
+                }
+
+                showError(errorMsg);
+                updateStatus('网络错误', 'error');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            });
+
+            // 绑定网络恢复事件
+            asr.onNetworkRecovery(async (data) => {
+                console.log('[ASR Network Recovery]', data);
+
+                // 根据错误码进行不同处理
+                if (data.code === 'NETWORK_RECOVERY') {
+                    // 显示网络恢复提示
+                    showError('网络已恢复，正在重新连接...');
+                    updateStatus('网络已恢复，正在连接...', 'connected');
+                }
+
+                if (data.networkStatus) {
+                    console.log('[ASR] 网络状态:', data.networkStatus);
+                }
+
+                // 网络恢复时重新初始化 SDK
+                try {
+                    // 销毁旧实例
+                    if (asr) {
+                        asr.destroy();
+                        asr = null;
+                    }
+
+                    // 重新初始化 SDK
+                    await initASR(currentModeValue);
+                    console.log('[ASR] 网络恢复后重新初始化成功');
+                    showError('已重新连接');
+                    updateStatus('已连接', 'connected');
+                } catch (error) {
+                    console.error('[ASR] 网络恢复后重新初始化失败:', error);
+                    showError('重新连接失败，请手动刷新页面');
+                    updateStatus('连接失败', 'error');
+                }
+            });
+
+            // 绑定网络不可用事件
+            asr.onNetworkUnavailable((data) => {
+                console.error('[ASR Network Unavailable]', data);
+
+                // 根据错误码显示不同的提示信息
+                let errorMsg = '网络连接异常，请检查网络设置';
+
+                // 根据错误码进行不同处理
+                switch (data.code) {
+                    case 'NETWORK_UNAVAILABLE':
+                        errorMsg = '网络连接不可用，请检查网络设置后重试';
+                        break;
+                    case 'NETWORK_OFFLINE':
+                        errorMsg = '网络已断开，请检查网络设置';
+                        break;
+                }
+
+                showError(errorMsg);
+                updateStatus('网络不可用', 'error');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+
+                if (data.networkStatus) {
+                    console.log('[ASR] 网络状态:', data.networkStatus);
+                }
+            });
         }
 
         // 更新示例显示
@@ -569,7 +662,9 @@ asr.onComplete((result) => {
         }
 
         // 初始化 SDK（默认使用 offline 离线文件转写模式）
-        initASR('offline');
+        (async () => {
+            await initASR('offline');
+        })();
 
         // 更新状态显示
         function updateStatus(message, type = '') {
@@ -597,7 +692,7 @@ asr.onComplete((result) => {
         }
 
         // 模式切换事件
-        modeSelect.addEventListener('change', (e) => {
+        modeSelect.addEventListener('change', async (e) => {
             const selectedMode = e.target.value;
             currentModeValue = selectedMode;
 
@@ -611,7 +706,7 @@ asr.onComplete((result) => {
             updateExample(selectedMode);
 
             // 重新初始化 SDK
-            initASR(selectedMode);
+            await initASR(selectedMode);
             updateStatus('准备就绪');
             updateResult('识别内容将显示在这里...', true);
 
@@ -647,7 +742,7 @@ asr.onComplete((result) => {
                 updateStatus('启动失败', 'error');
             }
         });
-
+        
         // 停止录音按钮点击事件
         stopBtn.addEventListener('click', async () => {
             try {
@@ -655,7 +750,7 @@ asr.onComplete((result) => {
                 await asr.stopRecording();
             } catch (error) {
                 console.error('[FunASR] 停止录音失败:', error);
-                showError('停止失败: ' + (error.message || '未知错误'));
+                showError('停止录音失败: ' + (error.message || '未知错误'));
             }
         });
 
@@ -665,8 +760,6 @@ asr.onComplete((result) => {
                 asr.destroy();
             }
         });
-
-        console.log('[FunASR] SDK 初始化完成，等待用户操作...');
     </script>
 </body>
 </html>

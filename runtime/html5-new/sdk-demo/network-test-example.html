@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FunASR SDK 网络检查测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+        }
+        .status.online {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.offline {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .status.warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        #log {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px 5px;
+        }
+        .log-entry.error {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        .log-entry.success {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+        .log-entry.warning {
+            background-color: #fff3e0;
+            color: #ef6c00;
+        }
+    </style>
+</head>
+<body>
+    <h1>FunASR SDK 网络检查测试</h1>
+    
+    <div class="section">
+        <h2>网络状态</h2>
+        <div id="networkStatus" class="status">
+            正在检测网络状态...
+        </div>
+        <button onclick="checkNetwork()">手动检查网络</button>
+    </div>
+
+    <div class="section">
+        <h2>SDK 操作</h2>
+        <button onclick="initSDK()">初始化 SDK</button>
+        <button onclick="connect()">连接服务器</button>
+        <button onclick="startRecording()">开始录音</button>
+        <button onclick="stopRecording()">停止录音</button>
+        <button onclick="disconnect()">断开连接</button>
+        <button onclick="destroySDK()">销毁 SDK</button>
+    </div>
+
+    <div class="section">
+        <h2>事件日志</h2>
+        <div id="log"></div>
+        <button onclick="clearLog()">清空日志</button>
+    </div>
+
+    <script src="funasr-sdk.js"></script>
+    <script>
+        let asr = null;
+        const logElement = document.getElementById('log');
+        const networkStatusElement = document.getElementById('networkStatus');
+
+        // 日志函数
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const time = new Date().toLocaleTimeString();
+            entry.textContent = `[${time}] ${message}`;
+            logElement.appendChild(entry);
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        function clearLog() {
+            logElement.innerHTML = '';
+        }
+
+        // 更新网络状态显示
+        function updateNetworkStatus() {
+            if (asr) {
+                const status = asr.getNetworkStatus();
+                const isOnline = status.isOnline;
+                const isConnected = status.isConnected;
+                
+                let statusText = '';
+                let statusClass = '';
+                
+                if (isOnline && isConnected) {
+                    statusText = '✓ 网络正常，已连接到服务器';
+                    statusClass = 'online';
+                } else if (isOnline && !isConnected) {
+                    statusText = '⚠ 网络正常，但未连接到服务器';
+                    statusClass = 'warning';
+                } else {
+                    statusText = '✗ 网络已断开';
+                    statusClass = 'offline';
+                }
+                
+                if (status.connectionInfo) {
+                    statusText += `<br><small>网络类型: ${status.connectionInfo.effectiveType || 'unknown'}, `;
+                    statusText += `延迟: ${status.connectionInfo.rtt || 'unknown'}ms</small>`;
+                }
+                
+                networkStatusElement.innerHTML = statusText;
+                networkStatusElement.className = `status ${statusClass}`;
+                
+                log(`网络状态: ${isOnline ? '在线' : '离线'}, 连接状态: ${isConnected ? '已连接' : '未连接'}`, 
+                    isOnline ? 'success' : 'error');
+            } else {
+                const isOnline = navigator.onLine;
+                networkStatusElement.innerHTML = isOnline ? '✓ 网络正常' : '✗ 网络已断开';
+                networkStatusElement.className = `status ${isOnline ? 'online' : 'offline'}`;
+            }
+        }
+
+        // 检查网络
+        function checkNetwork() {
+            updateNetworkStatus();
+        }
+
+        // 初始化 SDK
+        function initSDK() {
+            try {
+                log('正在初始化 SDK...');
+                
+                asr = new FunASRController({
+                    wsUrl: 'ws://127.0.0.1:10095/',
+                    mode: '2pass'
+                });
+
+                // 绑定网络错误事件
+                asr.onNetworkError((error) => {
+                    log(`网络错误: ${error.message}`, 'error');
+                    updateNetworkStatus();
+                });
+
+                // 绑定网络恢复事件
+                asr.onNetworkRecovery((data) => {
+                    log(`网络恢复: ${data.message}`, 'success');
+                    updateNetworkStatus();
+                });
+
+                // 绑定网络不可用事件
+                asr.onNetworkUnavailable((data) => {
+                    log(`网络不可用: ${data.message}`, 'warning');
+                    updateNetworkStatus();
+                });
+
+                // 绑定连接事件
+                asr.onConnecting((data) => {
+                    log(`连接中: ${data.message || '正在连接...'}`, 'info');
+                });
+
+                asr.onConnected(() => {
+                    log('已连接到服务器', 'success');
+                    updateNetworkStatus();
+                });
+
+                asr.onDisconnected(() => {
+                    log('与服务器断开连接', 'warning');
+                    updateNetworkStatus();
+                });
+
+                // 绑定识别结果事件
+                asr.onResult((result) => {
+                    log(`识别结果: ${result.text}`, 'info');
+                });
+
+                asr.onComplete((result) => {
+                    log(`识别完成: ${result.text}`, 'success');
+                });
+
+                // 绑定错误事件
+                asr.onError((error) => {
+                    log(`错误: ${error.message}`, 'error');
+                });
+
+                log('SDK 初始化完成', 'success');
+                updateNetworkStatus();
+            } catch (error) {
+                log(`SDK 初始化失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 连接服务器
+        async function connect() {
+            if (!asr) {
+                log('请先初始化 SDK', 'error');
+                return;
+            }
+            try {
+                log('正在连接服务器...');
+                await asr.connect();
+                log('连接成功', 'success');
+            } catch (error) {
+                log(`连接失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 开始录音
+        async function startRecording() {
+            if (!asr) {
+                log('请先初始化 SDK', 'error');
+                return;
+            }
+            try {
+                log('正在开始录音...');
+                await asr.startRecording();
+                log('录音已开始', 'success');
+            } catch (error) {
+                log(`开始录音失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 停止录音
+        async function stopRecording() {
+            if (!asr) {
+                log('请先初始化 SDK', 'error');
+                return;
+            }
+            try {
+                log('正在停止录音...');
+                await asr.stopRecording();
+                log('录音已停止', 'success');
+            } catch (error) {
+                log(`停止录音失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 断开连接
+        function disconnect() {
+            if (!asr) {
+                log('请先初始化 SDK', 'error');
+                return;
+            }
+            asr.disconnect();
+            log('已断开连接');
+        }
+
+        // 销毁 SDK
+        function destroySDK() {
+            if (!asr) {
+                log('SDK 未初始化', 'error');
+                return;
+            }
+            asr.destroy();
+            asr = null;
+            log('SDK 已销毁');
+        }
+
+        // 监听浏览器网络状态变化
+        window.addEventListener('online', () => {
+            log('浏览器检测到网络已连接', 'success');
+            updateNetworkStatus();
+        });
+
+        window.addEventListener('offline', () => {
+            log('浏览器检测到网络已断开', 'error');
+            updateNetworkStatus();
+        });
+
+        // 初始检查
+        updateNetworkStatus();
+    </script>
+</body>
+</html>

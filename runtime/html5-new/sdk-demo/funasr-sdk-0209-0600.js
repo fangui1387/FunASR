@@ -1654,8 +1654,6 @@
             // 如果网络错误次数过多，触发网络不可用事件
             if (this._networkErrorCount >= this._maxNetworkErrors) {
                 this._emit('networkUnavailable', {
-                    type: 'network_unavailable',
-                    code: 'NETWORK_UNAVAILABLE',
                     message: '网络连接异常，请检查网络设置',
                     networkStatus: this.getNetworkStatus()
                 });
@@ -1674,7 +1672,7 @@
         }
 
         /**
-         * 检测网络恢复（已简化，只触发事件让外部处理）
+         * 检测网络恢复
          * @private
          */
         _detectNetworkRecovery() {
@@ -1692,19 +1690,18 @@
             
             // 延迟检测网络恢复，避免频繁切换
             this._networkRecoveryTimer = setTimeout(() => {
-                // 只有当状态为 CLOSED 且不在连接中时才触发网络恢复事件
+                // 只有当状态为 CLOSED 且不在连接中时才触发重连
                 if (this._isOnline && this.state === WSState.CLOSED && !this._isDestroyed && !this._isConnecting) {
                     this._emit('networkRecovery', {
-                        type: 'network_recovery',
-                        code: 'NETWORK_RECOVERY',
-                        message: '网络已恢复',
+                        message: '网络已恢复，正在重新连接',
                         networkStatus: this.getNetworkStatus()
                     });
                     
                     // 重置错误计数
                     this._resetNetworkErrors();
                     
-                    // 不再自动重连，由外部决定如何处理
+                    // 尝试重新连接
+                    this._scheduleReconnect();
                 }
                 this._isRecovering = false;
             }, 2000);
@@ -1776,39 +1773,31 @@
                     networkStatus: this.getNetworkStatus()
                 });
 
-                // 如果之前是离线状态，触发网络恢复事件（由外部处理）
+                // 如果之前是离线状态，检测网络恢复
                 if (wasOffline) {
-                    this._emit('networkRecovery', {
-                        type: 'network_recovery',
-                        code: 'NETWORK_RECOVERY',
-                        message: '网络已恢复',
-                        networkStatus: this.getNetworkStatus()
-                    });
-                    this._resetNetworkErrors();
+                    this._detectNetworkRecovery();
                 }
             };
 
             this._handleOffline = () => {
                 this._isOnline = false;
-
+                
                 // 记录网络状态变更
                 this._recordNetworkStatus('offline', false, {
                     connectionState: this.state
                 });
-
-                // 触发网络不可用事件
-                this._emit('networkUnavailable', {
-                    type: 'network_unavailable',
-                    code: 'NETWORK_OFFLINE',
-                    message: '网络连接已断开，请检查网络设置',
-                    networkStatus: this.getNetworkStatus()
-                });
-
+                
+                // 处理网络错误
+                this._handleNetworkError(
+                    new Error('网络连接已断开'),
+                    { source: 'browser_offline_event' }
+                );
+                
                 this._emit('offline', {
                     message: '网络已断开',
                     networkStatus: this.getNetworkStatus()
                 });
-
+                
                 // 清理当前连接
                 if (this.state !== WSState.CLOSED && !this._isDestroyed) {
                     this._cleanupWebSocket();
@@ -2183,17 +2172,22 @@
                 networkStatus: this.getNetworkStatus()
             });
 
+            // 触发 disconnected 事件，确保 stateManager 状态更新
+            this._emit('disconnected');
+
             // 清理 WebSocket 引用
             this.ws = null;
 
-            // 连接断开时触发 disconnected 事件，由外部处理重连逻辑
-            if (wasConnected) {
-                this._emit('disconnected', {
-                    type: 'disconnected',
-                    code: 'CONNECTION_DISCONNECTED',
-                    message: '连接已断开',
-                    networkStatus: this.getNetworkStatus()
-                });
+            // 尝试重连（避免在网络恢复过程中重复触发）
+            if (wasConnected && this._reconnectCount < this.config.reconnectAttempts && !this._isRecovering) {
+                if (this._isOnline) {
+                    this._scheduleReconnect();
+                } else {
+                    this._emit('reconnectDelayed', {
+                        message: '网络已断开，将在网络恢复后自动重连',
+                        networkStatus: this.getNetworkStatus()
+                    });
+                }
             }
         }
 
@@ -2485,13 +2479,8 @@
                 const timeSinceLastPong = Date.now() - this._lastPongTime;
                 if (timeSinceLastPong > this.config.heartbeatInterval * 2) {
                     this._cleanupWebSocket();
-                    // 触发 disconnected 事件，由外部处理重连逻辑
-                    this._emit('disconnected', {
-                        type: 'disconnected',
-                        code: 'HEARTBEAT_TIMEOUT',
-                        message: '心跳超时，连接已断开',
-                        networkStatus: this.getNetworkStatus()
-                    });
+                    // 触发重连
+                    this._scheduleReconnect();
                     return;
                 }
                 
@@ -2513,17 +2502,48 @@
         }
 
         /**
-         * 计划重连（已废弃，由外部处理重连逻辑）
+         * 计划重连
          */
         _scheduleReconnect() {
-            // 不再自动重连，只触发 disconnected 事件让外部处理
-            console.log('WSClient: Connection closed, emitting disconnected event for external handling');
-            this._emit('disconnected', {
-                type: 'disconnected',
-                code: 'CONNECTION_CLOSED',
-                message: '连接已关闭',
-                networkStatus: this.getNetworkStatus()
-            });
+            this._reconnectCount++;
+            
+            // 检查网络状态
+            if (!this._isOnline) {
+                this._emit('reconnectDelayed', {
+                    message: '网络已断开，将在网络恢复后自动重连',
+                    networkStatus: this.getNetworkStatus(),
+                    attempt: this._reconnectCount
+                });
+                return;
+            }
+
+            this._reconnectTimer = setTimeout(() => {
+                // 再次检查网络状态
+                if (!this._isOnline) {
+                    this._emit('reconnectDelayed', {
+                        message: '网络已断开，将在网络恢复后自动重连',
+                        networkStatus: this.getNetworkStatus(),
+                        attempt: this._reconnectCount
+                    });
+                    return;
+                }
+                
+                this._emit('reconnecting', { 
+                    attempt: this._reconnectCount,
+                    networkStatus: this.getNetworkStatus()
+                });
+                
+                this.connect(this._connectionParams).catch(error => {
+                    console.error('WSClient: Reconnect failed:', error);
+                    // 如果是网络错误，触发网络错误事件
+                    if (!this._isOnline || error.message.includes('网络') || error.message.includes('离线')) {
+                        this._handleNetworkError(error, {
+                            phase: 'reconnect',
+                            attempt: this._reconnectCount
+                        });
+                    }
+                });
+            }, this.config.reconnectDelay);
         }
 
         /**
@@ -3660,7 +3680,6 @@
                     console.warn('FunASRController: Network is offline during initialization');
                     this._emit('networkError', {
                         type: 'network_error',
-                        code: 'NETWORK_UNAVAILABLE',
                         message: '网络连接不可用，请检查网络设置',
                         networkStatus: networkStatus,
                         phase: 'initialization'
@@ -3734,7 +3753,7 @@
                 this._emit('connected');
             });
 
-            this.wsClient.on('disconnected', (data) => {
+            this.wsClient.on('disconnected', () => {
                 this.stateManager.setConnectionState(ConnectionState.DISCONNECTED);
                 this._networkStatus.isConnected = false;
 
@@ -3750,12 +3769,7 @@
                     this.audioRecorder.stop();
                 }
 
-                this._emit('disconnected', {
-                    type: 'disconnected',
-                    code: data?.code || 'CONNECTION_DISCONNECTED',
-                    message: data?.message || '连接已断开',
-                    networkStatus: this.getNetworkStatus()
-                });
+                this._emit('disconnected');
             });
 
             this.wsClient.on('error', (error) => {
@@ -3778,8 +3792,7 @@
                 this._networkStatus.isOnline = true;
                 this._emit('networkRecovery', {
                     type: 'network_recovery',
-                    code: data?.code || 'NETWORK_RECOVERY',
-                    message: data?.message || '网络已连接',
+                    message: data.message || '网络已连接',
                     networkStatus: this.getNetworkStatus()
                 });
             });
@@ -3789,8 +3802,7 @@
                 this._networkStatus.isConnected = false;
                 this._emit('networkError', {
                     type: 'network_error',
-                    code: data?.code || 'NETWORK_OFFLINE',
-                    message: data?.message || '网络已断开',
+                    message: data.message || '网络已断开',
                     networkStatus: this.getNetworkStatus()
                 });
             });
@@ -3799,8 +3811,7 @@
                 this._networkStatus.lastError = error;
                 this._emit('networkError', {
                     type: 'network_error',
-                    code: error?.code || 'NETWORK_ERROR',
-                    message: error?.message || '网络连接错误',
+                    message: error.message || '网络连接错误',
                     networkStatus: this.getNetworkStatus(),
                     details: error
                 });
@@ -3809,8 +3820,7 @@
             this.wsClient.on('networkUnavailable', (data) => {
                 this._emit('networkUnavailable', {
                     type: 'network_unavailable',
-                    code: data?.code || 'NETWORK_UNAVAILABLE',
-                    message: data?.message || '网络连接异常',
+                    message: data.message || '网络连接异常',
                     networkStatus: this.getNetworkStatus()
                 });
             });
@@ -3818,13 +3828,27 @@
             this.wsClient.on('networkRecovery', (data) => {
                 this._emit('networkRecovery', {
                     type: 'network_recovery',
-                    code: data?.code || 'NETWORK_RECOVERY',
-                    message: data?.message || '网络已恢复',
+                    message: data.message || '网络已恢复',
                     networkStatus: this.getNetworkStatus()
                 });
             });
 
+            this.wsClient.on('reconnectDelayed', (data) => {
+                this._emit('networkError', {
+                    type: 'network_error',
+                    message: data.message || '网络已断开，重连已延迟',
+                    networkStatus: this.getNetworkStatus()
+                });
+            });
 
+            this.wsClient.on('reconnecting', (data) => {
+                this._emit('connecting', {
+                    type: 'reconnecting',
+                    message: `正在尝试重新连接... (第 ${data.attempt} 次)`,
+                    attempt: data.attempt,
+                    networkStatus: data.networkStatus || this.getNetworkStatus()
+                });
+            });
 
             this.wsClient.on('close', (data) => {
                 // 如果是网络错误导致的关闭，触发网络错误事件
@@ -4049,13 +4073,12 @@
                 return await this.wsClient.connect(connectionParams);
             } catch (error) {
                 // 检查是否是网络相关错误
-                if (!this.isNetworkAvailable() ||
-                    error.message.includes('网络') ||
+                if (!this.isNetworkAvailable() || 
+                    error.message.includes('网络') || 
                     error.message.includes('离线') ||
                     error.message.includes('offline')) {
                     this._emit('networkError', {
                         type: 'network_error',
-                        code: 'CONNECTION_FAILED',
                         message: error.message,
                         networkStatus: this.getNetworkStatus(),
                         phase: 'connect',
