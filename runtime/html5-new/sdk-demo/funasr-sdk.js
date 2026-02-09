@@ -612,6 +612,9 @@
         RECORDING_TIMEOUT: 'recording_timeout',
         AUDIO_PROCESSING_ERROR: 'audio_processing_error',
         
+        // 识别结果超时错误
+        RECOGNITION_RESULT_TIMEOUT: 'recognition_result_timeout',
+        
         // 配置相关错误
         CONFIG_ERROR: 'config_error',
         INVALID_URL: 'invalid_url',
@@ -1479,7 +1482,11 @@
         heartbeatInterval: 30000,
         maxQueueSize: 100, // 最大发送队列大小
         sendTimeout: 5000, // 发送超时时间(ms)
-        headers: {} // URL查询参数（WebSocket不支持HTTP请求头），请根据实际需求配置认证信息
+        headers: {}, // URL查询参数（WebSocket不支持HTTP请求头），请根据实际需求配置认证信息
+        
+        // 识别结果超时检测配置
+        recognitionResultTimeout: 15000, // 识别结果超时时间(ms)，默认15秒
+        enableRecognitionTimeout: true // 是否启用识别结果超时检测
     };
 
     /**
@@ -1513,6 +1520,11 @@
             this._heartbeatTimer = null;
             this._lastPongTime = 0;
             this._lastPingTime = 0;
+            
+            // 识别结果超时检测相关
+            this._lastRecognitionTime = 0;
+            this._recognitionTimeoutTimer = null;
+            this._hasReceivedFinalResult = false;
             
             // 数据缓冲
             this._sendQueue = [];
@@ -2288,6 +2300,9 @@
                 console.log('[WSClient Debug] ========== _handleRecognitionResult ==========');
                 console.log('[WSClient Debug] 原始data:', JSON.stringify(data));
 
+                // 更新最后识别结果时间
+                this._lastRecognitionTime = Date.now();
+
                 // 使用服务器返回的mode
                 const resultMode = data.mode || 'offline';
 
@@ -2301,6 +2316,11 @@
                     receiveTime: Date.now()
                 };
 
+                // 记录是否收到最终结果
+                if (result.isFinal === true) {
+                    this._hasReceivedFinalResult = true;
+                }
+
                 this._recognitionResults.push(result);
                 // 限制结果数组大小防止内存溢出
                 if (this._recognitionResults.length > this._maxResultsSize) {
@@ -2313,7 +2333,7 @@
                 // 判断是否为最终结果（仅触发complete事件，不影响实时显示）：
                 // 必须同时满足：1. isFinal 为 true；2. mode 为 "2pass-offline" 或 "offline"
                 // isFinal 表示服务器确认这是最终结果，mode 用于区分识别模式
-                const isComplete = result.isFinal === true && 
+                const isComplete = result.isFinal === true &&
                                    (result.mode === '2pass-offline' || result.mode === 'offline');
 
                 if (isComplete) {
@@ -2472,15 +2492,15 @@
         _startHeartbeat() {
             // 先停止已有心跳，防止重复启动
             this._stopHeartbeat();
-            
+
             this._lastPongTime = Date.now();
             this._lastPingTime = Date.now();
-            
+
             this._heartbeatTimer = setInterval(() => {
                 if (this.state !== WSState.OPEN) {
                     return;
                 }
-                
+
                 // 检查心跳响应超时
                 const timeSinceLastPong = Date.now() - this._lastPongTime;
                 if (timeSinceLastPong > this.config.heartbeatInterval * 2) {
@@ -2494,11 +2514,30 @@
                     });
                     return;
                 }
-                
+
+                // 检查识别结果超时（仅在录音状态下且未收到最终结果时检查）
+                if (this.config.enableRecognitionTimeout && this._lastRecognitionTime > 0 && !this._hasReceivedFinalResult) {
+                    const timeSinceLastRecognition = Date.now() - this._lastRecognitionTime;
+                    if (timeSinceLastRecognition > this.config.recognitionResultTimeout) {
+                        console.warn(`WSClient: Recognition result timeout - no result received for ${timeSinceLastRecognition}ms`);
+                        const error = new Error(`识别结果超时，${this.config.recognitionResultTimeout / 1000}秒内未收到新的识别结果，可能网络已断开`);
+                        error.type = ErrorType.RECOGNITION_RESULT_TIMEOUT;
+                        error.code = 'RECOGNITION_RESULT_TIMEOUT';
+                        error.details = {
+                            lastRecognitionTime: this._lastRecognitionTime,
+                            timeout: this.config.recognitionResultTimeout,
+                            networkStatus: this.getNetworkStatus()
+                        };
+                        this._emit('error', error);
+                        // 重置，避免重复触发
+                        this._lastRecognitionTime = 0;
+                    }
+                }
+
                 // 发送心跳
                 this._lastPingTime = Date.now();
                 this._sendJson({ type: 'ping' });
-                
+
             }, this.config.heartbeatInterval);
         }
 
@@ -2510,6 +2549,26 @@
                 clearInterval(this._heartbeatTimer);
                 this._heartbeatTimer = null;
             }
+        }
+
+        /**
+         * 启动识别结果超时检测
+         * 在录音开始时调用
+         */
+        _startRecognitionTimeoutDetection() {
+            this._lastRecognitionTime = Date.now();
+            this._hasReceivedFinalResult = false;
+            console.log('[WSClient] Recognition timeout detection started');
+        }
+
+        /**
+         * 停止识别结果超时检测
+         * 在录音结束或收到最终结果时调用
+         */
+        _stopRecognitionTimeoutDetection() {
+            this._lastRecognitionTime = 0;
+            this._hasReceivedFinalResult = false;
+            console.log('[WSClient] Recognition timeout detection stopped');
         }
 
         /**
@@ -3937,13 +3996,18 @@
                 if (this.results.length > this._maxResultsSize) {
                     this.results = this.results.slice(-this._maxResultsSize);
                 }
-                
+
                 if (this.config.mode === '2pass' || this.config.mode === 'online') {
                     if (finalText) {
                         result.fullText = finalText;
                     }
                 }
-                
+
+                // 收到最终结果，停止识别结果超时检测
+                if (this.wsClient) {
+                    this.wsClient._stopRecognitionTimeoutDetection();
+                }
+
                 this._emit('complete', result);
             } catch (error) {
                 console.error('FunASRController: Error handling recognition complete:', error);
@@ -4200,6 +4264,11 @@
                 this.currentSentence = '';
                 this.currentText = '';
 
+                // 启动识别结果超时检测
+                if (this.wsClient) {
+                    this.wsClient._startRecognitionTimeoutDetection();
+                }
+
                 // 开始录音
                 await this.audioRecorder.start();
             } catch (error) {
@@ -4237,10 +4306,17 @@
                 if (this.wsClient && this.stateManager.isConnected) {
                     this.wsClient.sendEndSignal();
                 }
+
+                // 停止识别结果超时检测（录音已停止，等待最终结果）
+                // 注意：这里不立即停止，而是在收到最终结果或连接断开时停止
             } catch (error) {
                 this.errorHandler.handle(error, { phase: 'stopRecording' });
                 // 强制重置状态以防万一
                 this.stateManager.setRecordingState(RecordingState.IDLE);
+                // 发生错误时停止识别结果超时检测
+                if (this.wsClient) {
+                    this.wsClient._stopRecognitionTimeoutDetection();
+                }
                 throw error;
             }
         }

@@ -445,7 +445,19 @@ asr.onComplete((result) => {
                 wsUrl: wsUrl,
                 mode: mode,
                 itn: true,
-                maxDuration: 60000    //默认是60s
+                maxDuration: 60000,    //默认是60s
+                // 识别结果超时检测配置
+                recognitionResultTimeout: 15000, // 15秒内未收到新识别结果则触发超时
+                enableRecognitionTimeout: true,  // 启用识别结果超时检测
+                // 热词配置 - 对象格式，key为热词，value为权重(1-100)
+                hotwords: {
+                    "建设银行": 20,
+                    "信用卡": 20,
+                    "贷款": 20,
+                    "储蓄卡": 20,
+                    "网银": 20,
+                    "手机银行": 20
+                }
             });
 
             // 绑定事件（每次创建新实例都需要重新绑定）
@@ -493,18 +505,20 @@ asr.onComplete((result) => {
             // 绑定错误事件
             asr.onError((error) => {
                 console.error('[ASR Error]', error);
-                
+
                 // 根据错误类型显示不同的提示信息
                 let errorMsg = '识别错误: ' + (error.message || '未知错误');
-                
+
                 if (error.code === 'PERMISSION_DENIED' || error.type === 'permission_denied') {
                     errorMsg = '麦克风权限被拒绝，请在浏览器设置中允许访问麦克风';
                 } else if (error.code === 'NETWORK_ERROR' || error.type === 'network_error') {
                     errorMsg = '网络连接失败，请检查网络设置';
                 } else if (error.code === 'CONNECTION_TIMEOUT' || error.type === 'connection_timeout') {
                     errorMsg = '连接服务器超时，请稍后重试';
+                } else if (error.type === 'recognition_result_timeout') {
+                    errorMsg = '识别结果超时，网络可能已断开，请检查网络后重试';
                 }
-                
+
                 showError(errorMsg);
                 updateStatus('发生错误', 'error');
                 startBtn.disabled = false;
