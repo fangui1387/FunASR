@@ -612,9 +612,6 @@
         RECORDING_TIMEOUT: 'recording_timeout',
         AUDIO_PROCESSING_ERROR: 'audio_processing_error',
         
-        // 识别结果超时错误
-        RECOGNITION_RESULT_TIMEOUT: 'recognition_result_timeout',
-        
         // 配置相关错误
         CONFIG_ERROR: 'config_error',
         INVALID_URL: 'invalid_url',
@@ -766,110 +763,6 @@
             if (this._isDestroyed) {
                 throw new Error('ErrorHandler: Instance has been destroyed');
             }
-        }
-
-        /**
-         * 检查网络状态
-         * @returns {Object} 网络状态信息
-         */
-        checkNetworkStatus() {
-            const status = {
-                isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
-                isNetworkAvailable: false,
-                connectionInfo: null,
-                error: null
-            };
-
-            // 获取网络连接信息
-            if (typeof navigator !== 'undefined' && navigator.connection) {
-                status.connectionInfo = {
-                    effectiveType: navigator.connection.effectiveType,
-                    downlink: navigator.connection.downlink,
-                    rtt: navigator.connection.rtt,
-                    saveData: navigator.connection.saveData
-                };
-            }
-
-            // 检查网络是否可用（navigator.onLine 只是浏览器是否连接到网络，不代表能访问互联网）
-            status.isNetworkAvailable = status.isOnline;
-
-            return status;
-        }
-
-        /**
-         * 异步检测网络连通性
-         * @param {string} testUrl - 用于测试网络连通性的URL
-         * @param {number} timeout - 超时时间（毫秒）
-         * @returns {Promise<Object>} 网络检测结果
-         */
-        async checkNetworkConnectivity(testUrl = null, timeout = 5000) {
-            const result = {
-                isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
-                isReachable: false,
-                error: null,
-                latency: null
-            };
-
-            // 如果浏览器报告离线，直接返回
-            if (!result.isOnline) {
-                result.error = '浏览器处于离线状态';
-                return result;
-            }
-
-            // 如果没有提供测试URL，使用默认的检测方式
-            if (!testUrl) {
-                // 尝试使用 navigator.onLine 和 connection API
-                result.isReachable = true;
-                return result;
-            }
-
-            try {
-                const startTime = Date.now();
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-                const response = await fetch(testUrl, {
-                    method: 'HEAD',
-                    mode: 'no-cors',
-                    signal: controller.signal
-                });
-
-                clearTimeout(timeoutId);
-                result.isReachable = true;
-                result.latency = Date.now() - startTime;
-            } catch (error) {
-                result.isReachable = false;
-                if (error.name === 'AbortError') {
-                    result.error = '网络检测超时';
-                } else {
-                    result.error = `网络连接失败: ${error.message}`;
-                }
-            }
-
-            return result;
-        }
-
-        /**
-         * 创建网络错误对象
-         * @param {string} message - 错误消息
-         * @param {Object} context - 错误上下文
-         * @returns {Object} 标准化的网络错误对象
-         */
-        createNetworkError(message, context = {}) {
-            const networkStatus = this.checkNetworkStatus();
-            return {
-                type: ErrorType.NETWORK_ERROR,
-                code: 'NETWORK_UNAVAILABLE',
-                message: message || '网络连接不可用',
-                originalError: null,
-                context: {
-                    ...context,
-                    networkStatus: networkStatus
-                },
-                timestamp: Date.now(),
-                recoverable: true,
-                retryCount: 0
-            };
         }
 
         /**
@@ -1117,11 +1010,6 @@
                 }
             } else if (error && typeof error === 'object') {
                 Object.assign(normalized, error);
-            }
-
-            // 确保 message 不为空
-            if (!normalized.message || normalized.message.trim() === '') {
-                normalized.message = '发生未知错误，请刷新页面重试';
             }
 
             // 根据错误类型设置可恢复性
@@ -1482,11 +1370,7 @@
         heartbeatInterval: 30000,
         maxQueueSize: 100, // 最大发送队列大小
         sendTimeout: 5000, // 发送超时时间(ms)
-        headers: {}, // URL查询参数（WebSocket不支持HTTP请求头），请根据实际需求配置认证信息
-        
-        // 识别结果超时检测配置
-        recognitionResultTimeout: 15000, // 识别结果超时时间(ms)，默认15秒
-        enableRecognitionTimeout: true // 是否启用识别结果超时检测
+        headers: {} // URL查询参数（WebSocket不支持HTTP请求头），请根据实际需求配置认证信息
     };
 
     /**
@@ -1521,11 +1405,6 @@
             this._lastPongTime = 0;
             this._lastPingTime = 0;
             
-            // 识别结果超时检测相关
-            this._lastRecognitionTime = 0;
-            this._recognitionTimeoutTimer = null;
-            this._hasReceivedFinalResult = false;
-            
             // 数据缓冲
             this._sendQueue = [];
             this._isSending = false;
@@ -1553,173 +1432,8 @@
             // 浏览器在线状态
             this._isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
             
-            // 网络状态历史记录
-            this._networkStatusHistory = [];
-            this._maxNetworkHistorySize = 50;
-            
-            // 网络错误计数
-            this._networkErrorCount = 0;
-            this._maxNetworkErrors = 5;
-            
-            // 网络恢复检测
-            this._networkRecoveryTimer = null;
-            this._isRecovering = false;
-            
             // 绑定浏览器在线/离线事件
             this._bindOnlineEvents();
-            
-            // 记录初始网络状态
-            this._recordNetworkStatus('init', this._isOnline);
-        }
-
-        /**
-         * 获取当前网络状态
-         * @returns {Object} 网络状态信息
-         */
-        getNetworkStatus() {
-            const status = {
-                isOnline: this._isOnline,
-                isConnected: this.state === WSState.OPEN,
-                state: this.state,
-                reconnectCount: this._reconnectCount,
-                networkErrorCount: this._networkErrorCount,
-                isRecovering: this._isRecovering,
-                connectionInfo: null
-            };
-
-            // 获取网络连接信息
-            if (typeof navigator !== 'undefined' && navigator.connection) {
-                status.connectionInfo = {
-                    effectiveType: navigator.connection.effectiveType,
-                    downlink: navigator.connection.downlink,
-                    rtt: navigator.connection.rtt,
-                    saveData: navigator.connection.saveData
-                };
-            }
-
-            return status;
-        }
-
-        /**
-         * 记录网络状态变更
-         * @private
-         */
-        _recordNetworkStatus(event, isOnline, details = {}) {
-            const entry = {
-                timestamp: Date.now(),
-                event: event,
-                isOnline: isOnline,
-                connectionState: this.state,
-                details: details
-            };
-
-            this._networkStatusHistory.push(entry);
-
-            // 限制历史记录大小
-            if (this._networkStatusHistory.length > this._maxNetworkHistorySize) {
-                this._networkStatusHistory.shift();
-            }
-        }
-
-        /**
-         * 检查网络是否可用
-         * @returns {boolean} 网络是否可用
-         */
-        isNetworkAvailable() {
-            // 基础检查：浏览器网络是否在线
-            if (!this._isOnline) {
-                return false;
-            }
-            
-            // 如果 WebSocket 从未连接过（初始状态），只要网络在线就返回 true
-            if (this.state === WSState.CLOSED && this._reconnectCount === 0) {
-                return true;
-            }
-            
-            // 已连接过，检查 WebSocket 是否真正可用
-            return this.ws !== null && this.state === WSState.OPEN;
-        }
-
-        /**
-         * 处理网络错误
-         * @private
-         */
-        _handleNetworkError(error, context = {}) {
-            this._networkErrorCount++;
-            
-            const networkError = {
-                type: 'network_error',
-                message: error.message || '网络连接错误',
-                code: error.code || 'NETWORK_ERROR',
-                context: {
-                    ...context,
-                    networkStatus: this.getNetworkStatus(),
-                    networkErrorCount: this._networkErrorCount
-                },
-                timestamp: Date.now(),
-                recoverable: this._networkErrorCount < this._maxNetworkErrors
-            };
-
-            console.error('WSClient: Network error:', networkError);
-            this._emit('networkError', networkError);
-
-            // 如果网络错误次数过多，触发网络不可用事件
-            if (this._networkErrorCount >= this._maxNetworkErrors) {
-                this._emit('networkUnavailable', {
-                    type: 'network_unavailable',
-                    code: 'NETWORK_UNAVAILABLE',
-                    message: '网络连接异常，请检查网络设置',
-                    networkStatus: this.getNetworkStatus()
-                });
-            }
-
-            return networkError;
-        }
-
-        /**
-         * 重置网络错误计数
-         * @private
-         */
-        _resetNetworkErrors() {
-            this._networkErrorCount = 0;
-            this._isRecovering = false;
-        }
-
-        /**
-         * 检测网络恢复（已简化，只触发事件让外部处理）
-         * @private
-         */
-        _detectNetworkRecovery() {
-            // 如果已经在恢复中，避免重复触发
-            if (this._isRecovering) {
-                console.log('WSClient: Network recovery already in progress, skipping...');
-                return;
-            }
-
-            if (this._networkRecoveryTimer) {
-                clearTimeout(this._networkRecoveryTimer);
-            }
-
-            this._isRecovering = true;
-            
-            // 延迟检测网络恢复，避免频繁切换
-            this._networkRecoveryTimer = setTimeout(() => {
-                // 只有当状态为 CLOSED 且不在连接中时才触发网络恢复事件
-                if (this._isOnline && this.state === WSState.CLOSED && !this._isDestroyed && !this._isConnecting) {
-                    this._emit('networkRecovery', {
-                        type: 'network_recovery',
-                        code: 'NETWORK_RECOVERY',
-                        message: '网络已恢复',
-                        networkStatus: this.getNetworkStatus()
-                    });
-                    
-                    // 重置错误计数
-                    this._resetNetworkErrors();
-                    
-                    // 不再自动重连，由外部决定如何处理
-                }
-                this._isRecovering = false;
-            }, 2000);
         }
 
         /**
@@ -1774,53 +1488,22 @@
             }
 
             this._handleOnline = () => {
-                const wasOffline = !this._isOnline;
+                console.log('WSClient: Browser went online');
                 this._isOnline = true;
-
-                // 记录网络状态变更
-                this._recordNetworkStatus('online', true, {
-                    previousState: wasOffline ? 'offline' : 'online',
-                    connectionState: this.state
-                });
-
-                this._emit('online', {
-                    message: '网络已连接',
-                    networkStatus: this.getNetworkStatus()
-                });
-
-                // 如果之前是离线状态，触发网络恢复事件（由外部处理）
-                if (wasOffline) {
-                    this._emit('networkRecovery', {
-                        type: 'network_recovery',
-                        code: 'NETWORK_RECOVERY',
-                        message: '网络已恢复',
-                        networkStatus: this.getNetworkStatus()
-                    });
-                    this._resetNetworkErrors();
+                this._emit('online');
+                
+                // 如果当前未连接，尝试重新连接
+                if (this.state === WSState.CLOSED && !this._isConnecting && !this._isDestroyed) {
+                    console.log('WSClient: Auto-reconnecting after going online');
+                    this._scheduleReconnect();
                 }
             };
-
+            
             this._handleOffline = () => {
+                console.log('WSClient: Browser went offline');
                 this._isOnline = false;
-
-                // 记录网络状态变更
-                this._recordNetworkStatus('offline', false, {
-                    connectionState: this.state
-                });
-
-                // 触发网络不可用事件
-                this._emit('networkUnavailable', {
-                    type: 'network_unavailable',
-                    code: 'NETWORK_OFFLINE',
-                    message: '网络连接已断开，请检查网络设置',
-                    networkStatus: this.getNetworkStatus()
-                });
-
-                this._emit('offline', {
-                    message: '网络已断开',
-                    networkStatus: this.getNetworkStatus()
-                });
-
+                this._emit('offline');
+                
                 // 清理当前连接
                 if (this.state !== WSState.CLOSED && !this._isDestroyed) {
                     this._cleanupWebSocket();
@@ -1922,11 +1605,7 @@
                 try {
                     // 检查浏览器在线状态
                     if (!this._isOnline) {
-                        const networkError = this._handleNetworkError(
-                            new Error('浏览器处于离线状态，请检查网络连接'),
-                            { phase: 'connect', action: 'check_online' }
-                        );
-                        reject(new Error(networkError.message));
+                        reject(new Error('浏览器处于离线状态'));
                         return;
                     }
                     
@@ -2079,21 +1758,22 @@
             this._isConnecting = false;
             this._endSignalSent = false; // 连接成功后重置结束信号标志
             
-            // 连接成功，重置网络错误计数
-            this._resetNetworkErrors();
-            
-            // 记录连接成功事件
-            this._recordNetworkStatus('open', this._isOnline, {
-                state: this.state
-            });
+            console.log('[WSClient Debug] Connection opened');
             
             // 发送连接参数
             let paramsSent = false;
+            console.log('[WSClient Debug] _connectionParams:', JSON.stringify(this._connectionParams));
             if (this._connectionParams) {
                 const sent = this._sendJson(this._connectionParams);
+                console.log('[WSClient Debug] _sendJson result:', sent);
                 if (sent) {
                     paramsSent = true;
+                    console.log('[WSClient Debug] Connection params sent:', JSON.stringify(this._connectionParams));
+                } else {
+                    console.warn('[WSClient Debug] Failed to send connection params');
                 }
+            } else {
+                console.warn('[WSClient Debug] _connectionParams is undefined');
             }
             
             // 启动心跳
@@ -2103,32 +1783,19 @@
             this._processSendQueue();
             
             this._emit('open');
-
+            
             // 只有在连接参数发送成功后才触发 connected 事件
             // 添加延迟确保参数先到达服务器
             const delay = paramsSent ? 500 : 100;
             setTimeout(() => {
-                // 检查连接是否仍然打开（避免在延迟期间连接已断开）
-                if (this.state !== WSState.OPEN) {
-                    console.log('WSClient: Connection no longer open, skipping connected event');
-                    return;
-                }
-
-                // 检查 WebSocket 实例是否仍然存在
-                if (!this.ws) {
-                    console.log('WSClient: WebSocket instance is null, skipping connected event');
-                    return;
-                }
-
                 this._emit('connected');
-
-                // 在 connected 事件触发后才 resolve，确保连接完全就绪
-                if (this._connectResolve) {
-                    this._connectResolve();
-                    this._connectResolve = null;
-                    this._connectReject = null;
-                }
             }, delay);
+            
+            if (this._connectResolve) {
+                this._connectResolve();
+                this._connectResolve = null;
+                this._connectReject = null;
+            }
         }
 
         /**
@@ -2146,66 +1813,23 @@
             
             console.log(`WSClient: Connection closed, code: ${event.code}, reason: ${event.reason}`);
             
-            // 记录连接关闭事件
-            this._recordNetworkStatus('close', this._isOnline, {
-                code: event.code,
-                reason: event.reason,
-                wasClean: event.wasClean,
-                wasConnected: wasConnected,
-                wasConnecting: wasConnecting
-            });
-            
-            // 判断是否为网络相关的关闭代码
-            const networkErrorCodes = [1006, 1015]; // 异常关闭、TLS握手失败
-            const isNetworkError = networkErrorCodes.includes(event.code) || !event.wasClean;
-
-            // 构建错误信息
-            let errorMessage = '连接已断开';
-            if (!this._isOnline) {
-                errorMessage = '网络连接已断开，请检查网络设置';
-            } else if (event.code === 1006) {
-                errorMessage = '连接异常关闭，可能是网络不稳定或服务器不可用';
-            } else if (event.reason) {
-                errorMessage = `连接已断开: ${event.reason}`;
-            }
-
-            // 如果是网络错误，触发网络错误事件
-            if (isNetworkError || !this._isOnline) {
-                this._handleNetworkError(new Error(errorMessage), {
-                    phase: wasConnected ? 'connection' : 'connect',
-                    code: event.code,
-                    wasClean: event.wasClean,
-                    wasConnected: wasConnected
-                });
-            }
-
             // 如果正在连接过程中被关闭，reject Promise
             if (wasConnecting && this._connectReject) {
-                const error = new Error(errorMessage);
+                const error = new Error(`连接失败: ${event.reason || '连接被拒绝'}`);
                 this._connectReject(error);
                 this._connectResolve = null;
                 this._connectReject = null;
             }
-
+            
             this._emit('close', {
                 code: event.code,
                 reason: event.reason,
-                wasClean: event.wasClean,
-                isNetworkError: isNetworkError,
-                networkStatus: this.getNetworkStatus()
+                wasClean: event.wasClean
             });
 
-            // 清理 WebSocket 引用
-            this.ws = null;
-
-            // 连接断开时触发 disconnected 事件，由外部处理重连逻辑
-            if (wasConnected) {
-                this._emit('disconnected', {
-                    type: 'disconnected',
-                    code: 'CONNECTION_DISCONNECTED',
-                    message: '连接已断开',
-                    networkStatus: this.getNetworkStatus()
-                });
+            // 尝试重连
+            if (wasConnected && this._reconnectCount < this.config.reconnectAttempts) {
+                this._scheduleReconnect();
             }
         }
 
@@ -2215,25 +1839,10 @@
         _onError(error) {
             console.error('WSClient: Connection error:', error);
             
-            // 记录网络错误
-            this._recordNetworkStatus('error', this._isOnline, {
-                error: error.message || 'Unknown error'
-            });
-            
-            // 处理网络错误
-            const networkError = this._handleNetworkError(
-                error instanceof Error ? error : new Error('连接错误'),
-                { phase: 'connection', source: 'websocket_error' }
-            );
-            
             // 注意：WebSocket的错误事件不会提供详细信息
             // 详细的错误信息通常在close事件中
             
-            this._emit('error', {
-                ...networkError,
-                originalError: error,
-                networkStatus: this.getNetworkStatus()
-            });
+            this._emit('error', error);
             
             // 如果正在连接，由onClose处理reject
         }
@@ -2300,9 +1909,6 @@
                 console.log('[WSClient Debug] ========== _handleRecognitionResult ==========');
                 console.log('[WSClient Debug] 原始data:', JSON.stringify(data));
 
-                // 更新最后识别结果时间
-                this._lastRecognitionTime = Date.now();
-
                 // 使用服务器返回的mode
                 const resultMode = data.mode || 'offline';
 
@@ -2316,10 +1922,9 @@
                     receiveTime: Date.now()
                 };
 
-                // 记录是否收到最终结果
-                if (result.isFinal === true) {
-                    this._hasReceivedFinalResult = true;
-                }
+                console.log('[WSClient Debug] 解析后的result:', JSON.stringify(result));
+                console.log('[WSClient Debug] result.mode:', result.mode);
+                console.log('[WSClient Debug] this.config.mode:', this.config.mode);
 
                 this._recognitionResults.push(result);
                 // 限制结果数组大小防止内存溢出
@@ -2333,10 +1938,11 @@
                 // 判断是否为最终结果（仅触发complete事件，不影响实时显示）：
                 // 必须同时满足：1. isFinal 为 true；2. mode 为 "2pass-offline" 或 "offline"
                 // isFinal 表示服务器确认这是最终结果，mode 用于区分识别模式
-                const isComplete = result.isFinal === true &&
+                const isComplete = result.isFinal === true && 
                                    (result.mode === '2pass-offline' || result.mode === 'offline');
 
                 if (isComplete) {
+                    console.log('[WSClient Debug] 触发 complete 事件');
                     // 重置结束信号标志
                     this._endSignalSent = false;
                     this._emit('complete', result);
@@ -2365,7 +1971,7 @@
                 console.warn('WSClient: Cannot send data, WebSocket not initialized');
                 return false;
             }
-
+            
             if (this.state !== WSState.OPEN) {
                 console.warn('WSClient: Cannot send data, WebSocket not open');
                 return false;
@@ -2435,7 +2041,6 @@
                 }
                 
                 this.ws.send(buffer);
-                // console.log(`[WSClient] 音频数据已发送, 大小: ${buffer.byteLength} 字节, 时间: ${Date.now()}`);
                 return true;
             } catch (error) {
                 console.error('WSClient: Failed to send audio data:', error);
@@ -2492,52 +2097,28 @@
         _startHeartbeat() {
             // 先停止已有心跳，防止重复启动
             this._stopHeartbeat();
-
+            
             this._lastPongTime = Date.now();
             this._lastPingTime = Date.now();
-
+            
             this._heartbeatTimer = setInterval(() => {
                 if (this.state !== WSState.OPEN) {
                     return;
                 }
-
+                
                 // 检查心跳响应超时
                 const timeSinceLastPong = Date.now() - this._lastPongTime;
                 if (timeSinceLastPong > this.config.heartbeatInterval * 2) {
                     this._cleanupWebSocket();
-                    // 触发 disconnected 事件，由外部处理重连逻辑
-                    this._emit('disconnected', {
-                        type: 'disconnected',
-                        code: 'HEARTBEAT_TIMEOUT',
-                        message: '心跳超时，连接已断开',
-                        networkStatus: this.getNetworkStatus()
-                    });
+                    // 触发重连
+                    this._scheduleReconnect();
                     return;
                 }
-
-                // 检查识别结果超时（仅在录音状态下且未收到最终结果时检查）
-                if (this.config.enableRecognitionTimeout && this._lastRecognitionTime > 0 && !this._hasReceivedFinalResult) {
-                    const timeSinceLastRecognition = Date.now() - this._lastRecognitionTime;
-                    if (timeSinceLastRecognition > this.config.recognitionResultTimeout) {
-                        console.warn(`WSClient: Recognition result timeout - no result received for ${timeSinceLastRecognition}ms`);
-                        const error = new Error(`识别结果超时，${this.config.recognitionResultTimeout / 1000}秒内未收到新的识别结果，可能网络已断开`);
-                        error.type = ErrorType.RECOGNITION_RESULT_TIMEOUT;
-                        error.code = 'RECOGNITION_RESULT_TIMEOUT';
-                        error.details = {
-                            lastRecognitionTime: this._lastRecognitionTime,
-                            timeout: this.config.recognitionResultTimeout,
-                            networkStatus: this.getNetworkStatus()
-                        };
-                        this._emit('error', error);
-                        // 重置，避免重复触发
-                        this._lastRecognitionTime = 0;
-                    }
-                }
-
+                
                 // 发送心跳
                 this._lastPingTime = Date.now();
                 this._sendJson({ type: 'ping' });
-
+                
             }, this.config.heartbeatInterval);
         }
 
@@ -2552,37 +2133,18 @@
         }
 
         /**
-         * 启动识别结果超时检测
-         * 在录音开始时调用
-         */
-        _startRecognitionTimeoutDetection() {
-            this._lastRecognitionTime = Date.now();
-            this._hasReceivedFinalResult = false;
-            console.log('[WSClient] Recognition timeout detection started');
-        }
-
-        /**
-         * 停止识别结果超时检测
-         * 在录音结束或收到最终结果时调用
-         */
-        _stopRecognitionTimeoutDetection() {
-            this._lastRecognitionTime = 0;
-            this._hasReceivedFinalResult = false;
-            console.log('[WSClient] Recognition timeout detection stopped');
-        }
-
-        /**
-         * 计划重连（已废弃，由外部处理重连逻辑）
+         * 计划重连
          */
         _scheduleReconnect() {
-            // 不再自动重连，只触发 disconnected 事件让外部处理
-            console.log('WSClient: Connection closed, emitting disconnected event for external handling');
-            this._emit('disconnected', {
-                type: 'disconnected',
-                code: 'CONNECTION_CLOSED',
-                message: '连接已关闭',
-                networkStatus: this.getNetworkStatus()
-            });
+            this._reconnectCount++;
+            
+            this._reconnectTimer = setTimeout(() => {
+                this._emit('reconnecting', { attempt: this._reconnectCount });
+                
+                this.connect(this._connectionParams).catch(error => {
+                    console.error('WSClient: Reconnect failed:', error);
+                });
+            }, this.config.reconnectDelay);
         }
 
         /**
@@ -2678,6 +2240,7 @@
          */
         updateHeaders(headers) {
             this.config.headers = { ...this.config.headers, ...headers };
+            console.log('WSClient: Headers updated:', this.config.headers);
         }
 
         /**
@@ -2731,24 +2294,19 @@
                     clearInterval(this._heartbeatTimer);
                     this._heartbeatTimer = null;
                 }
-                if (this._networkRecoveryTimer) {
-                    clearTimeout(this._networkRecoveryTimer);
-                    this._networkRecoveryTimer = null;
-                }
                 
                 // 清理数据
                 this._listeners.clear();
                 this._recognitionResults = [];
                 this._sendQueue = [];
-                this._networkStatusHistory = [];
                 
                 // 清理引用
                 this.ws = null;
                 this._connectionParams = null;
                 this._connectResolve = null;
                 this._connectReject = null;
-                this._handleOnline = null;
-                this._handleOffline = null;
+                
+                console.log('WSClient: Client destroyed');
             } catch (error) {
                 console.error('WSClient: Error during destroy:', error);
             }
@@ -3026,7 +2584,8 @@
                                 }
                             }
                         };
-
+                        
+                        console.log('AudioRecorder: Recorder initialized');
                         this.state = RecorderState.IDLE;
                         this._initializing = false;
                         this._emit('initialized');
@@ -3105,11 +2664,10 @@
                 while (this.sampleBuffer.length >= chunkSize) {
                     const chunk = new Int16Array(this.sampleBuffer.slice(0, chunkSize));
                     this.sampleBuffer = this.sampleBuffer.slice(chunkSize);
-
+                    
                     this.stats.chunksSent++;
-
+                    
                     // 触发音频数据事件
-                    // console.log(`[AudioRecorder] 发送音频数据块 #${this.stats.chunksSent}, 大小: ${chunk.length} 采样点, 时间: ${Date.now()}`);
                     this._emit('audioData', chunk);
                     
                     // 调用外部处理回调
@@ -3231,6 +2789,7 @@
                 
                 // 设置最大录音时长限制
                 this._maxDurationTimer = setTimeout(() => {
+                    console.log('AudioRecorder: Max duration reached');
                     this._emit('maxDurationReached');
                     this.stop().catch(err => {
                         console.error('AudioRecorder: Error stopping after max duration:', err);
@@ -3301,6 +2860,7 @@
                         try {
                             this.mediaStream.getTracks().forEach(track => {
                                 track.stop();
+                                console.log('AudioRecorder: Media track stopped');
                             });
                         } catch (error) {
                             console.error('AudioRecorder: Error stopping media stream:', error);
@@ -3338,6 +2898,8 @@
                     }
 
                     this.state = RecorderState.IDLE;
+
+                    console.log('AudioRecorder: Recording stopped, duration:', duration);
 
                     this._emit('stopped', {
                         blob: null,
@@ -3555,7 +3117,8 @@
         hotwords: null,
         svsLang: 'auto',
         svsItn: true,
-        maxDuration: 60000  // 默认最大录音时长60秒
+        maxDuration: 60000,  // 默认最大录音时长60秒
+        recognitionTimeout: 10000  // 识别结果超时时间（毫秒），默认10秒
     };
 
     /**
@@ -3601,7 +3164,12 @@
             this.completedSentences = [];
             this.currentSentence = '';
             this._maxSentencesSize = 500; // 最大句子数限制
-            
+
+            // 识别结果超时检测相关
+            this._lastResultTime = 0;
+            this._recognitionTimeoutTimer = null;
+            this._isRecognitionTimeoutEnabled = this.config.recognitionTimeout > 0;
+
             // 事件监听器
             this._listeners = {
                 result: [],
@@ -3611,47 +3179,11 @@
                 stop: [],
                 connecting: [],
                 connected: [],
-                disconnected: [],
-                networkError: [],
-                networkRecovery: [],
-                networkUnavailable: []
-            };
-
-            // 网络状态跟踪
-            this._networkStatus = {
-                isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
-                isConnected: false,
-                lastError: null
+                disconnected: []
             };
 
             // 初始化
             this._initPromise = this._init();
-        }
-
-        /**
-         * 获取当前网络状态
-         * @returns {Object} 网络状态信息
-         */
-        getNetworkStatus() {
-            if (this.wsClient) {
-                return this.wsClient.getNetworkStatus();
-            }
-            return {
-                isOnline: this._networkStatus.isOnline,
-                isConnected: this._networkStatus.isConnected,
-                state: 'unknown'
-            };
-        }
-
-        /**
-         * 检查网络是否可用
-         * @returns {boolean} 网络是否可用
-         */
-        isNetworkAvailable() {
-            if (this.wsClient) {
-                return this.wsClient.isNetworkAvailable();
-            }
-            return this._networkStatus.isOnline;
         }
 
         /**
@@ -3710,22 +3242,6 @@
                     }
                 }
 
-                // 检查网络状态
-                const networkStatus = this.errorHandler.checkNetworkStatus();
-
-                // 如果网络不可用，记录警告但不阻止初始化
-                // 因为网络可能在后续恢复
-                if (!networkStatus.isOnline) {
-                    console.warn('FunASRController: Network is offline during initialization');
-                    this._emit('networkError', {
-                        type: 'network_error',
-                        code: 'NETWORK_UNAVAILABLE',
-                        message: '网络连接不可用，请检查网络设置',
-                        networkStatus: networkStatus,
-                        phase: 'initialization'
-                    });
-                }
-
                 // 初始化WebSocket客户端
                 this.wsClient = new WSClient({
                     url: this.config.wsUrl,
@@ -3745,8 +3261,9 @@
                 
                 // 绑定音频录制器事件
                 this._bindAudioRecorderEvents();
-
+                
                 this.stateManager.setAppState(AppState.READY);
+                console.log('FunASRController: Initialized successfully');
             } catch (error) {
                 this.stateManager.setAppState(AppState.ERROR);
                 console.error('FunASRController: Initialization failed:', error);
@@ -3788,38 +3305,16 @@
 
             this.wsClient.on('connected', () => {
                 this.stateManager.setConnectionState(ConnectionState.CONNECTED);
-                this._networkStatus.isConnected = true;
-                this._networkStatus.lastError = null;
                 this._emit('connected');
             });
 
-            this.wsClient.on('disconnected', (data) => {
+            this.wsClient.on('disconnected', () => {
                 this.stateManager.setConnectionState(ConnectionState.DISCONNECTED);
-                this._networkStatus.isConnected = false;
-
-                // 网络断开时，强制停止录音
-                if (this.stateManager.isRecording) {
-                    console.log('FunASRController: Network disconnected, forcing recording stop');
-                    this.stateManager.setRecordingState(RecordingState.IDLE);
-                }
-
-                // 如果录音器仍在运行，强制停止
-                if (this.audioRecorder && this.audioRecorder.isRecording) {
-                    console.log('FunASRController: Stopping audio recorder due to network disconnect');
-                    this.audioRecorder.stop();
-                }
-
-                this._emit('disconnected', {
-                    type: 'disconnected',
-                    code: data?.code || 'CONNECTION_DISCONNECTED',
-                    message: data?.message || '连接已断开',
-                    networkStatus: this.getNetworkStatus()
-                });
+                this._emit('disconnected');
             });
 
             this.wsClient.on('error', (error) => {
                 this.stateManager.setConnectionState(ConnectionState.ERROR);
-                this._networkStatus.lastError = error;
                 // 委托给 ErrorHandler 处理，它会通过事件冒泡触发 this._emit('error')
                 this.errorHandler.handle(error, { source: 'WebSocket' });
             });
@@ -3830,71 +3325,6 @@
 
             this.wsClient.on('complete', (result) => {
                 this._handleRecognitionComplete(result);
-            });
-
-            // 网络相关事件
-            this.wsClient.on('online', (data) => {
-                this._networkStatus.isOnline = true;
-                this._emit('networkRecovery', {
-                    type: 'network_recovery',
-                    code: data?.code || 'NETWORK_RECOVERY',
-                    message: data?.message || '网络已连接',
-                    networkStatus: this.getNetworkStatus()
-                });
-            });
-
-            this.wsClient.on('offline', (data) => {
-                this._networkStatus.isOnline = false;
-                this._networkStatus.isConnected = false;
-                this._emit('networkError', {
-                    type: 'network_error',
-                    code: data?.code || 'NETWORK_OFFLINE',
-                    message: data?.message || '网络已断开',
-                    networkStatus: this.getNetworkStatus()
-                });
-            });
-
-            this.wsClient.on('networkError', (error) => {
-                this._networkStatus.lastError = error;
-                this._emit('networkError', {
-                    type: 'network_error',
-                    code: error?.code || 'NETWORK_ERROR',
-                    message: error?.message || '网络连接错误',
-                    networkStatus: this.getNetworkStatus(),
-                    details: error
-                });
-            });
-
-            this.wsClient.on('networkUnavailable', (data) => {
-                this._emit('networkUnavailable', {
-                    type: 'network_unavailable',
-                    code: data?.code || 'NETWORK_UNAVAILABLE',
-                    message: data?.message || '网络连接异常',
-                    networkStatus: this.getNetworkStatus()
-                });
-            });
-
-            this.wsClient.on('networkRecovery', (data) => {
-                this._emit('networkRecovery', {
-                    type: 'network_recovery',
-                    code: data?.code || 'NETWORK_RECOVERY',
-                    message: data?.message || '网络已恢复',
-                    networkStatus: this.getNetworkStatus()
-                });
-            });
-
-
-
-            this.wsClient.on('close', (data) => {
-                // 如果是网络错误导致的关闭，触发网络错误事件
-                if (data.isNetworkError) {
-                    this._emit('networkError', {
-                        type: 'network_error',
-                        message: `连接关闭: ${data.reason || '网络异常'}`,
-                        code: data.code,
-                        networkStatus: data.networkStatus || this.getNetworkStatus()
-                    });
-                }
             });
         }
 
@@ -3915,9 +3345,8 @@
             });
 
             this.audioRecorder.on('audioData', (data) => {
-                // 直接检查 wsClient 的状态，避免 stateManager 状态不同步问题
-                if (this.wsClient && this.wsClient.isNetworkAvailable()) {
-                    // console.log(`[FunASRController] 发送音频数据到服务器, 大小: ${data.length} 采样点, 时间: ${Date.now()}`);
+                // 使用 stateManager 检查连接状态
+                if (this.wsClient && this.stateManager.isConnected) {
                     this.wsClient.sendAudio(data);
                 }
             });
@@ -3929,8 +3358,9 @@
 
             // 监听最大录音时长到达事件
             this.audioRecorder.on('maxDurationReached', () => {
+                console.log('FunASRController: Max recording duration reached');
                 // 发送结束信号给服务器
-                if (this.wsClient && this.wsClient.isNetworkAvailable()) {
+                if (this.wsClient && this.stateManager.isConnected) {
                     this.wsClient.sendEndSignal();
                 }
                 // 触发停止事件，通知UI更新
@@ -3949,6 +3379,9 @@
                     console.warn('FunASRController: Invalid result received', result);
                     return;
                 }
+
+                // 更新最后接收结果的时间（用于超时检测）
+                this._lastResultTime = Date.now();
 
                 const newText = result.text || '';
                 const isFinal = result.isFinal || false;
@@ -3996,18 +3429,13 @@
                 if (this.results.length > this._maxResultsSize) {
                     this.results = this.results.slice(-this._maxResultsSize);
                 }
-
+                
                 if (this.config.mode === '2pass' || this.config.mode === 'online') {
                     if (finalText) {
                         result.fullText = finalText;
                     }
                 }
-
-                // 收到最终结果，停止识别结果超时检测
-                if (this.wsClient) {
-                    this.wsClient._stopRecognitionTimeoutDetection();
-                }
-
+                
                 this._emit('complete', result);
             } catch (error) {
                 console.error('FunASRController: Error handling recognition complete:', error);
@@ -4056,9 +3484,6 @@
         onConnecting(callback) { return this.on('connecting', callback); }
         onConnected(callback) { return this.on('connected', callback); }
         onDisconnected(callback) { return this.on('disconnected', callback); }
-        onNetworkError(callback) { return this.on('networkError', callback); }
-        onNetworkRecovery(callback) { return this.on('networkRecovery', callback); }
-        onNetworkUnavailable(callback) { return this.on('networkUnavailable', callback); }
 
         // ========== 核心API方法 ==========
 
@@ -4067,18 +3492,6 @@
          */
         async connect(params = {}) {
             this._checkDestroyed();
-
-            // 首先检查网络状态
-            if (!this.isNetworkAvailable()) {
-                const networkError = new Error('网络连接不可用，请检查网络设置');
-                this._emit('networkError', {
-                    type: 'network_error',
-                    message: networkError.message,
-                    networkStatus: this.getNetworkStatus(),
-                    phase: 'connect'
-                });
-                throw networkError;
-            }
 
             if (!this.stateManager.isReady) {
                  // 等待初始化（如果还在进行中）
@@ -4112,20 +3525,6 @@
             try {
                 return await this.wsClient.connect(connectionParams);
             } catch (error) {
-                // 检查是否是网络相关错误
-                if (!this.isNetworkAvailable() ||
-                    error.message.includes('网络') ||
-                    error.message.includes('离线') ||
-                    error.message.includes('offline')) {
-                    this._emit('networkError', {
-                        type: 'network_error',
-                        code: 'CONNECTION_FAILED',
-                        message: error.message,
-                        networkStatus: this.getNetworkStatus(),
-                        phase: 'connect',
-                        originalError: error
-                    });
-                }
                 // error is already handled by wsClient 'error' event -> errorHandler
                 throw error;
             }
@@ -4159,26 +3558,7 @@
 
                 // 使用 stateManager 检查是否已经在录音
                 if (this.stateManager.isRecording) {
-                    // 如果网络不可用或连接已断开，强制重置录音状态
-                    const networkStatus = this.getNetworkStatus();
-                    if (!networkStatus.isOnline || !networkStatus.isConnected) {
-                        console.warn('FunASRController: Recording state is RECORDING but network unavailable, forcing reset');
-                        this.stateManager.setRecordingState(RecordingState.IDLE);
-                    } else {
-                        throw new Error('录音已在进行中');
-                    }
-                }
-
-                // 检查网络状态（浏览器网络是否在线）
-                if (!this._networkStatus.isOnline) {
-                    const networkError = new Error('网络连接不可用，请检查网络设置后重试');
-                    this._emit('networkError', {
-                        type: 'network_error',
-                        message: networkError.message,
-                        networkStatus: this.getNetworkStatus(),
-                        phase: 'startRecording'
-                    });
-                    throw networkError;
+                    throw new Error('录音已在进行中');
                 }
 
                 if (!this.wsClient || !this.audioRecorder) {
@@ -4202,30 +3582,9 @@
                     throw error;
                 }
 
-                // 再次检查网络状态（权限请求可能耗时较长）
-                if (!this.isNetworkAvailable()) {
-                    const networkError = new Error('网络连接已断开，请检查网络设置后重试');
-                    this._emit('networkError', {
-                        type: 'network_error',
-                        message: networkError.message,
-                        networkStatus: this.getNetworkStatus(),
-                        phase: 'startRecording'
-                    });
-                    throw networkError;
-                }
-
-                // 如果未连接或 WebSocket 未就绪，先连接
-                // 检查 wsClient 是否存在且 ws 不为 null 且状态为 OPEN
-                const isWsReady = this.wsClient && this.wsClient.ws && this.wsClient.ws.readyState === 1;
-                if (!this.stateManager.isConnected || !isWsReady) {
+                // 如果未连接，先连接
+                if (!this.stateManager.isConnected) {
                     await this.connect(params);
-                    // 连接后等待一小段时间确保 WebSocket 完全就绪
-                    await new Promise(resolve => setTimeout(resolve, 300));
-                }
-
-                // 再次检查 WebSocket 状态
-                if (!this.wsClient || !this.wsClient.ws || this.wsClient.ws.readyState !== 1) {
-                    throw new Error('WebSocket 连接未就绪，请稍后重试');
                 }
 
                 // 发送配置参数
@@ -4241,22 +3600,9 @@
                     svs_itn: this.config.svsItn
                 };
 
-                let sent = this.wsClient._sendJson(configMessage);
-
-                // 如果发送失败，尝试重新连接后再发送
+                const sent = this.wsClient._sendJson(configMessage);
                 if (!sent) {
-                    await this.connect(params);
-                    // 等待连接稳定
-                    await new Promise(resolve => setTimeout(resolve, 500));
-
-                    // 再次检查 WebSocket 状态并发送
-                    if (this.wsClient && this.wsClient.ws && this.wsClient.ws.readyState === 1) {
-                        sent = this.wsClient._sendJson(configMessage);
-                    }
-
-                    if (!sent) {
-                        throw new Error('Failed to send configuration to server after reconnect');
-                    }
+                    throw new Error('Failed to send configuration to server');
                 }
 
                 // 清空之前的结果
@@ -4264,10 +3610,9 @@
                 this.currentSentence = '';
                 this.currentText = '';
 
-                // 启动识别结果超时检测
-                if (this.wsClient) {
-                    this.wsClient._startRecognitionTimeoutDetection();
-                }
+                // 重置最后接收结果时间并启动超时检测
+                this._lastResultTime = Date.now();
+                this._startRecognitionTimeoutTimer();
 
                 // 开始录音
                 await this.audioRecorder.start();
@@ -4297,6 +3642,9 @@
             }
 
             try {
+                // 停止超时检测定时器
+                this._stopRecognitionTimeoutTimer();
+
                 // 停止录音
                 if (this.audioRecorder) {
                     await this.audioRecorder.stop();
@@ -4306,18 +3654,82 @@
                 if (this.wsClient && this.stateManager.isConnected) {
                     this.wsClient.sendEndSignal();
                 }
-
-                // 停止识别结果超时检测（录音已停止，等待最终结果）
-                // 注意：这里不立即停止，而是在收到最终结果或连接断开时停止
             } catch (error) {
                 this.errorHandler.handle(error, { phase: 'stopRecording' });
                 // 强制重置状态以防万一
                 this.stateManager.setRecordingState(RecordingState.IDLE);
-                // 发生错误时停止识别结果超时检测
-                if (this.wsClient) {
-                    this.wsClient._stopRecognitionTimeoutDetection();
-                }
                 throw error;
+            }
+        }
+
+        /**
+         * 启动识别结果超时检测定时器
+         * @private
+         */
+        _startRecognitionTimeoutTimer() {
+            // 如果未启用超时检测或超时时间无效，则不启动
+            if (!this._isRecognitionTimeoutEnabled || this.config.recognitionTimeout <= 0) {
+                return;
+            }
+
+            // 先清除已有的定时器
+            this._stopRecognitionTimeoutTimer();
+
+            const timeout = this.config.recognitionTimeout;
+            console.log(`[FunASRController] 启动识别结果超时检测，超时时间: ${timeout}ms`);
+
+            // 使用周期性检查的方式，每1秒检查一次
+            this._recognitionTimeoutTimer = setInterval(() => {
+                if (!this.stateManager.isRecording) {
+                    // 如果已经停止录音，清除定时器
+                    this._stopRecognitionTimeoutTimer();
+                    return;
+                }
+
+                const elapsed = Date.now() - this._lastResultTime;
+                if (elapsed >= timeout) {
+                    console.warn(`[FunASRController] 识别结果超时，已等待 ${elapsed}ms 未收到新结果`);
+                    this._handleRecognitionTimeout();
+                }
+            }, 1000); // 每秒检查一次
+        }
+
+        /**
+         * 停止识别结果超时检测定时器
+         * @private
+         */
+        _stopRecognitionTimeoutTimer() {
+            if (this._recognitionTimeoutTimer) {
+                clearInterval(this._recognitionTimeoutTimer);
+                this._recognitionTimeoutTimer = null;
+                console.log('[FunASRController] 停止识别结果超时检测');
+            }
+        }
+
+        /**
+         * 处理识别结果超时
+         * @private
+         */
+        _handleRecognitionTimeout() {
+            // 停止超时检测定时器
+            this._stopRecognitionTimeoutTimer();
+
+            // 构建超时错误
+            const timeoutError = new Error('识别结果超时：后端服务异常或网络异常，服务不可用');
+            timeoutError.code = 'RECOGNITION_TIMEOUT';
+            timeoutError.type = 'recognition_timeout';
+            timeoutError.message = '识别结果超时：后端服务异常或网络异常，服务不可用';
+
+            console.error('[FunASRController] 识别结果超时，触发错误事件');
+
+            // 通过 errorHandler 触发错误事件
+            this.errorHandler.handle(timeoutError, { phase: 'recognitionTimeout' });
+
+            // 停止录音（但不发送结束信号，因为连接可能已经异常）
+            if (this.audioRecorder && this.stateManager.isRecording) {
+                this.audioRecorder.stop().catch(err => {
+                    console.warn('[FunASRController] 超时后停止录音失败:', err);
+                });
             }
         }
 
@@ -4410,6 +3822,8 @@
                 Object.keys(this._listeners).forEach(key => {
                     this._listeners[key] = [];
                 });
+
+                console.log('FunASRController: Destroyed');
             } catch (error) {
                 console.error('FunASRController: Error during destroy:', error);
             }

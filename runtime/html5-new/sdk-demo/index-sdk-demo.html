@@ -260,7 +260,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>🎤 FunASR 语音识别</h1>
+        <h1>FunASR 语音识别</h1>
         
         <div class="mode-selector">
             <label for="modeSelect">选择识别模式：</label>
@@ -303,12 +303,13 @@
 
         <!-- offline 模式示例 -->
         <div class="example-section" id="exampleOffline">
-            <div class="example-title">💡 offline 模式代码示例（默认）</div>
+            <div class="example-title">offline 模式代码示例（默认）</div>
             <div class="example-code">// offline 模式：录音结束后一次性识别
 const asr = new FunASRController({
     wsUrl: 'ws://127.0.0.1:10095/',
     mode: 'offline',      // 离线模式
-    itn: true             // 启用逆文本标准化
+    itn: true,            // 启用逆文本标准化
+    recognitionTimeout: 10000  // 识别结果超时时间（毫秒），默认10秒
 });
 
 // 识别结果（仅在录音结束后返回）
@@ -320,12 +321,19 @@ asr.onResult((result) => {
 // 识别完成
 asr.onComplete((result) => {
     console.log('最终识别结果:', result.fullText);
+});
+
+// 错误处理（包含识别结果超时）
+asr.onError((error) => {
+    if (error.code === 'RECOGNITION_TIMEOUT') {
+        console.log('服务不可用:', error.message);
+    }
 });</div>
         </div>
 
         <!-- 2pass 模式示例 -->
         <div class="example-section" id="example2pass" style="display: none;">
-            <div class="example-title">💡 2pass 模式代码示例</div>
+            <div class="example-title">2pass 模式代码示例</div>
             <div class="example-code">// 2pass 模式：实时识别 + 离线精修
 const asr = new FunASRController({
     wsUrl: 'ws://127.0.0.1:10095/',
@@ -353,7 +361,7 @@ asr.onComplete((result) => {
 
         <!-- online 模式示例 -->
         <div class="example-section" id="exampleOnline" style="display: none;">
-            <div class="example-title">💡 online 模式代码示例</div>
+            <div class="example-title">online 模式代码示例</div>
             <div class="example-code">// online 模式：实时流式识别
 const asr = new FunASRController({
     wsUrl: 'ws://127.0.0.1:10095/',
@@ -427,18 +435,27 @@ asr.onComplete((result) => {
         let asr = null;
 
         // 初始化 SDK 实例
-        async function initASR(mode = 'offline') {
+        async function initASR(mode) {
             // 销毁旧实例
             if (asr) {
                 asr.destroy();
                 asr = null;
             }
 
-            // WebSocket 地址（已包含所有查询参数）
+            // WebSocket 地址
             //const wsUrl = 'wss://ifm.service.ccb.com/ai-service/aiwsasr/asr?Tx-Code=A4102AU14&X-Sec-Node-No=400136&Trace-Id=123456&Tx-Serial-No=0001&Access_Token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJBY2Nlc3NfS2V5X0lkIjoiMTIxMDI1NDM2NjM1MTU3Mjk5MiIsInR5cGUiOiJhaV9nd19hY2Nlc3NfdG9rZW4iLCJleHAiOjE3NzI2MTI4MDgsInVzZXJuYW1lIjoibGl5aW5naHVpMS56aCJ9.lKvPnJTdsUr29BfbHCgh4IvNNJcQeEhbEYI8dGH8sCg&q2h=abc';
             // const wsUrl = 'ws://192.168.43.12:10095/';
             const wsUrl = 'ws://127.0.0.1:10095/';
-            // const wsUrl = 'ws://43.138.5.20:10096/';
+
+            // 热词配置 - 对象格式，key为热词，value为权重(1-100)
+            const hotwordsConfig = {
+                "建设银行": 20,
+                "信用卡": 20,
+                "贷款": 20,
+                "储蓄卡": 20,
+                "网银": 20,
+                "手机银行": 20
+            };
 
             // 创建新实例
             asr = new FunASRController({
@@ -446,18 +463,11 @@ asr.onComplete((result) => {
                 mode: mode,
                 itn: true,
                 maxDuration: 60000,    //默认是60s
-                // 识别结果超时检测配置
-                recognitionResultTimeout: 15000, // 15秒内未收到新识别结果则触发超时
-                enableRecognitionTimeout: true,  // 启用识别结果超时检测
-                // 热词配置 - 对象格式，key为热词，value为权重(1-100)
-                hotwords: {
-                    "建设银行": 20,
-                    "信用卡": 20,
-                    "贷款": 20,
-                    "储蓄卡": 20,
-                    "网银": 20,
-                    "手机银行": 20
-                }
+                // 识别结果超时配置（毫秒）
+                // 开始录音后，若后端服务异常或网络异常，超过此时间未返回识别结果将触发错误
+                recognitionTimeout: 10000,  // 默认10秒，设为0或负数可禁用超时检测
+                // 热词配置 - 使用 JSON.stringify() 序列化
+                hotwords: JSON.stringify(hotwordsConfig)
             });
 
             // 绑定事件（每次创建新实例都需要重新绑定）
@@ -465,12 +475,12 @@ asr.onComplete((result) => {
 
             // 等待 SDK 初始化完成并自动连接
             try {
-                console.log(`[FunASR] SDK 初始化中，当前模式: ${mode}`);
+                console.log('[FunASR] SDK 初始化中，当前模式: ' + mode);
                 // 等待一小段时间确保 SDK 初始化完成
                 await new Promise(resolve => setTimeout(resolve, 500));
                 // 尝试连接服务器
                 await asr.connect();
-                console.log(`[FunASR] SDK 已初始化并连接，当前模式: ${mode}`);
+                console.log('[FunASR] SDK 已初始化并连接，当前模式: ' + mode);
             } catch (error) {
                 console.error('[FunASR] SDK 初始化或连接失败:', error);
                 // 不阻止初始化，让用户可以手动重试连接
@@ -488,8 +498,6 @@ asr.onComplete((result) => {
                 if (fullDisplayText) {
                     updateResult(fullDisplayText);
                 }
-
-                // 注意：识别完成状态在 onComplete 中处理，避免重复更新
             });
 
             // 绑定识别完成事件
@@ -502,27 +510,52 @@ asr.onComplete((result) => {
                 stopBtn.disabled = true;
             });
 
-            // 绑定错误事件
-            asr.onError((error) => {
+            // 绑定错误事件 - 统一处理所有错误
+            asr.onError(async (error) => {
                 console.error('[ASR Error]', error);
 
                 // 根据错误类型显示不同的提示信息
                 let errorMsg = '识别错误: ' + (error.message || '未知错误');
+                let shouldReinit = false;
 
                 if (error.code === 'PERMISSION_DENIED' || error.type === 'permission_denied') {
                     errorMsg = '麦克风权限被拒绝，请在浏览器设置中允许访问麦克风';
                 } else if (error.code === 'NETWORK_ERROR' || error.type === 'network_error') {
                     errorMsg = '网络连接失败，请检查网络设置';
+                    shouldReinit = true;
                 } else if (error.code === 'CONNECTION_TIMEOUT' || error.type === 'connection_timeout') {
                     errorMsg = '连接服务器超时，请稍后重试';
+                    shouldReinit = true;
                 } else if (error.type === 'recognition_result_timeout') {
                     errorMsg = '识别结果超时，网络可能已断开，请检查网络后重试';
+                    shouldReinit = true;
+                } else if (error.message && error.message.indexOf('WebSocket not initialized') !== -1) {
+                    errorMsg = '连接已断开，正在重新初始化...';
+                    shouldReinit = true;
+                } else if (error.message && error.message.indexOf('Failed to send configuration to server') !== -1) {
+                    errorMsg = '发送配置失败，正在重新初始化...';
+                    shouldReinit = true;
                 }
 
                 showError(errorMsg);
                 updateStatus('发生错误', 'error');
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
+
+                // 如果是连接相关错误，自动重新初始化 SDK
+                if (shouldReinit) {
+                    console.log('[FunASR] 检测到连接错误，正在重新初始化 SDK...');
+                    try {
+                        await initASR(currentModeValue);
+                        console.log('[FunASR] SDK 重新初始化成功');
+                        showError('已重新连接');
+                        updateStatus('准备就绪');
+                    } catch (reinitError) {
+                        console.error('[FunASR] SDK 重新初始化失败:', reinitError);
+                        showError('重新连接失败，请刷新页面重试');
+                        updateStatus('连接失败', 'error');
+                    }
+                }
             });
 
             // 绑定开始录音事件
@@ -560,104 +593,6 @@ asr.onComplete((result) => {
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
             });
-
-            // 绑定网络错误事件
-            asr.onNetworkError((error) => {
-                console.error('[ASR Network Error]', error);
-
-                // 根据错误码显示不同的提示信息
-                let errorMsg = '网络错误: ' + (error.message || '网络连接异常');
-
-                // 根据错误码进行不同处理
-                switch (error.code) {
-                    case 'NETWORK_UNAVAILABLE':
-                        errorMsg = '网络连接不可用，请检查网络设置';
-                        break;
-                    case 'NETWORK_OFFLINE':
-                        errorMsg = '网络已断开，请检查网络设置';
-                        break;
-                    case 'CONNECTION_FAILED':
-                        errorMsg = '连接服务器失败，请稍后重试';
-                        break;
-                    case 'CONNECTION_DISCONNECTED':
-                        errorMsg = '连接已断开';
-                        break;
-                    case 'HEARTBEAT_TIMEOUT':
-                        errorMsg = '连接超时，请检查网络';
-                        break;
-                }
-
-                if (error.networkStatus) {
-                    console.log('[ASR] 网络状态:', error.networkStatus);
-                }
-
-                showError(errorMsg);
-                updateStatus('网络错误', 'error');
-                startBtn.disabled = false;
-                stopBtn.disabled = true;
-            });
-
-            // 绑定网络恢复事件
-            asr.onNetworkRecovery(async (data) => {
-                console.log('[ASR Network Recovery]', data);
-
-                // 根据错误码进行不同处理
-                if (data.code === 'NETWORK_RECOVERY') {
-                    // 显示网络恢复提示
-                    showError('网络已恢复，正在重新连接...');
-                    updateStatus('网络已恢复，正在连接...', 'connected');
-                }
-
-                if (data.networkStatus) {
-                    console.log('[ASR] 网络状态:', data.networkStatus);
-                }
-
-                // 网络恢复时重新初始化 SDK
-                try {
-                    // 销毁旧实例
-                    if (asr) {
-                        asr.destroy();
-                        asr = null;
-                    }
-
-                    // 重新初始化 SDK
-                    await initASR(currentModeValue);
-                    console.log('[ASR] 网络恢复后重新初始化成功');
-                    showError('已重新连接');
-                    updateStatus('已连接', 'connected');
-                } catch (error) {
-                    console.error('[ASR] 网络恢复后重新初始化失败:', error);
-                    showError('重新连接失败，请手动刷新页面');
-                    updateStatus('连接失败', 'error');
-                }
-            });
-
-            // 绑定网络不可用事件
-            asr.onNetworkUnavailable((data) => {
-                console.error('[ASR Network Unavailable]', data);
-
-                // 根据错误码显示不同的提示信息
-                let errorMsg = '网络连接异常，请检查网络设置';
-
-                // 根据错误码进行不同处理
-                switch (data.code) {
-                    case 'NETWORK_UNAVAILABLE':
-                        errorMsg = '网络连接不可用，请检查网络设置后重试';
-                        break;
-                    case 'NETWORK_OFFLINE':
-                        errorMsg = '网络已断开，请检查网络设置';
-                        break;
-                }
-
-                showError(errorMsg);
-                updateStatus('网络不可用', 'error');
-                startBtn.disabled = false;
-                stopBtn.disabled = true;
-
-                if (data.networkStatus) {
-                    console.log('[ASR] 网络状态:', data.networkStatus);
-                }
-            });
         }
 
         // 更新示例显示
@@ -681,7 +616,7 @@ asr.onComplete((result) => {
         })();
 
         // 更新状态显示
-        function updateStatus(message, type = '') {
+        function updateStatus(message, type) {
             statusBar.textContent = message;
             statusBar.className = 'status-bar' + (type ? ' ' + type : '');
         }
@@ -696,7 +631,7 @@ asr.onComplete((result) => {
         }
 
         // 更新结果文本
-        function updateResult(text, isPlaceholder = false) {
+        function updateResult(text, isPlaceholder) {
             resultText.textContent = text;
             if (isPlaceholder) {
                 resultText.classList.add('placeholder');
@@ -724,7 +659,7 @@ asr.onComplete((result) => {
             updateStatus('准备就绪');
             updateResult('识别内容将显示在这里...', true);
 
-            console.log(`[FunASR] 切换到 ${selectedMode} 模式`);
+            console.log('[FunASR] 切换到 ' + selectedMode + ' 模式');
         });
 
         // 开始录音按钮点击事件
@@ -737,6 +672,7 @@ asr.onComplete((result) => {
                 
                 // 根据错误类型显示不同的提示信息
                 let errorMsg = '启动失败: ' + (error.message || '请检查麦克风权限');
+                let shouldReinit = false;
                 
                 if (error.code === 'PERMISSION_DENIED' || error.type === 'permission_denied') {
                     errorMsg = '录音权限被拒绝，请在浏览器设置中允许访问麦克风';
@@ -748,12 +684,35 @@ asr.onComplete((result) => {
                     errorMsg = '当前环境不支持录音，请使用HTTPS或localhost访问';
                 } else if (error.code === 'NETWORK_ERROR') {
                     errorMsg = '网络连接失败，请检查网络设置';
+                    shouldReinit = true;
                 } else if (error.code === 'CONNECTION_TIMEOUT') {
                     errorMsg = '连接服务器超时，请稍后重试';
+                    shouldReinit = true;
+                } else if (error.message && error.message.indexOf('WebSocket not initialized') !== -1) {
+                    errorMsg = '连接已断开，正在重新初始化...';
+                    shouldReinit = true;
+                } else if (error.message && error.message.indexOf('Failed to send configuration to server') !== -1) {
+                    errorMsg = '发送配置失败，正在重新初始化...';
+                    shouldReinit = true;
                 }
                 
                 showError(errorMsg);
                 updateStatus('启动失败', 'error');
+                
+                // 如果是连接相关错误，尝试重新初始化 SDK
+                if (shouldReinit) {
+                    console.log('[FunASR] 检测到连接错误，正在重新初始化 SDK...');
+                    try {
+                        await initASR(currentModeValue);
+                        console.log('[FunASR] SDK 重新初始化成功');
+                        showError('已重新连接，请再次点击开始录音');
+                        updateStatus('准备就绪');
+                    } catch (reinitError) {
+                        console.error('[FunASR] SDK 重新初始化失败:', reinitError);
+                        showError('重新连接失败，请刷新页面重试');
+                        updateStatus('连接失败', 'error');
+                    }
+                }
             }
         });
         
